@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/sheets-retry",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/booking-expiry",
+      "schedule": "*/5 * * * *"
     }
   ]
 }
