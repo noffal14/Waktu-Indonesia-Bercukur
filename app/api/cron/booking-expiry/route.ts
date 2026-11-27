@@ -44,7 +44,7 @@ export async function GET(request: Request) {
       });
       tx.set(db.collection('bookingPublic').doc(item.id), { status: 'Canceled', canceledAt: now }, { merge: true });
       lockSnaps.forEach((lock) => {
-        if (lock.exists && lock.data()?.bookingId === item.id) {
+        if (lock.exists && (lock.data() as FirebaseFirestore.DocumentData | undefined)?.bookingId === item.id) {
           tx.set(lock.ref, { status: 'Released', releasedAt: now }, { merge: true });
         }
       });
