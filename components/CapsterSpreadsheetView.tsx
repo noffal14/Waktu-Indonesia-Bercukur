@@ -80,10 +80,7 @@ export function CapsterSpreadsheetView() {
   }, [dateFrom, dateTo, customerSearch]);
 
   useEffect(() => {
-    if (!firebaseAuth) {
-      setError('Firebase belum dikonfigurasi.');
-      return;
-    }
+    if (!firebaseAuth) return;
 
     let disposed = false;
     let heartbeatTimer: number | undefined;
@@ -154,7 +151,7 @@ export function CapsterSpreadsheetView() {
           </div>
         </div>
 
-        {error && <div role="alert" className="rounded-xl border border-rose-500/40 bg-rose-950/40 p-4 text-sm text-rose-200">{error}</div>}
+        {(error || (!firebaseAuth ? 'Firebase belum dikonfigurasi.' : null)) && <div role="alert" className="rounded-xl border border-rose-500/40 bg-rose-950/40 p-4 text-sm text-rose-200">{error || 'Firebase belum dikonfigurasi.'}</div>}
 
         <section className="space-y-3 rounded-2xl border border-zinc-800 bg-[#131317] p-4 sm:p-5">
           <div>
