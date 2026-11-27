@@ -376,7 +376,7 @@ async function handleBookingCustomerCancel(uid: string, id: string, reschedule?:
     const booking = current.data()!;
     await releaseBookingLocks(tx, booking);
     const rescheduledAt = Date.now();
-    const nextBooking = { ...booking, capsterId, tanggal: date, jamSlot: startSlot, slotTercakup: newSlots, waktuDiubah: rescheduledAt };
+    const nextBooking: FirebaseFirestore.DocumentData = { ...booking, capsterId, tanggal: date, jamSlot: startSlot, slotTercakup: newSlots, waktuDiubah: rescheduledAt };
     tx.set(ref, nextBooking, { merge: true });
     tx.set(publicRef, { capsterId, tanggal: date, jamSlot: startSlot, slotTercakup: newSlots }, { merge: true });
     newLockRefs.forEach((lockRef, i) => tx.set(lockRef, { status: 'Booked', bookingId: id, capsterId, tanggal: date, jam: newSlots[i] }));
