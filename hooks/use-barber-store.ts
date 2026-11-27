@@ -587,9 +587,11 @@ export function useBarberStore() {
           headers: { Authorization: `Bearer ${token}`, 'x-capster-session-id': sessionId },
         });
       }
+    } catch {
+      // Sesi server akan kedaluwarsa otomatis setelah 90 detik jika jaringan gagal.
     } finally {
       window.sessionStorage.removeItem('wib_capster_session_id');
-      if (firebaseAuth) await signOut(firebaseAuth);
+      if (firebaseAuth) await signOut(firebaseAuth).catch(() => undefined);
       barberService.logoutCapster();
       setLoggedInCapsterId(null);
       setSessionRole((prev) => (prev === 'capster' ? null : prev));
