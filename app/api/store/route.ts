@@ -326,7 +326,7 @@ async function handleBookingCustomerCancel(uid: string, id: string, reschedule?:
   const newScheduleRef = db.collection('schedules').doc(capsterId + '_' + date);
   const newLockRefs = newSlots.map((slot: string) => db.collection('bookingSlots').doc(slotLockId(capsterId, date, slot)));
 
-  await db.runTransaction(async (tx) => {
+  const updatedBooking = await db.runTransaction(async (tx) => {
     const current = await tx.get(ref);
     const [scheduleSnap, ...lockSnaps] = await Promise.all([tx.get(newScheduleRef), ...newLockRefs.map((lock) => tx.get(lock))]);
     if (!current.exists || current.data()?.status !== 'Booked' || current.data()?.customerUid !== uid) throw new Error('INVALID_STATE');
@@ -334,11 +334,13 @@ async function handleBookingCustomerCancel(uid: string, id: string, reschedule?:
     if (lockSnaps.some((lock) => ['Booked', 'In-Service', 'Manual'].includes(String(lock.data()?.status || '')) && lock.data()?.bookingId !== id)) throw new Error('SLOT_TAKEN');
     const booking = current.data()!;
     await releaseBookingLocks(tx, booking);
-    const next = { ...booking, capsterId, tanggal: date, jamSlot: startSlot, slotTercakup: newSlots, waktuDiubah: Date.now() };
-    tx.set(ref, next, { merge: true });
+    const nextBooking = { ...booking, capsterId, tanggal: date, jamSlot: startSlot, slotTercakup: newSlots, waktuDiubah: Date.now() };
+    tx.set(ref, nextBooking, { merge: true });
     tx.set(publicRef, { capsterId, tanggal: date, jamSlot: startSlot, slotTercakup: newSlots }, { merge: true });
     newLockRefs.forEach((lockRef, i) => tx.set(lockRef, { status: 'Booked', bookingId: id, capsterId, tanggal: date, jam: newSlots[i] }));
+    return nextBooking;
   });
+  await syncBookingFinal(id, updatedBooking, { nama: existing.nama, nomorWhatsApp: existing.nomorWhatsApp }, 'Booked (harga final dikonfirmasi capster)');
   return Response.json({ ok: true });
 }
 
