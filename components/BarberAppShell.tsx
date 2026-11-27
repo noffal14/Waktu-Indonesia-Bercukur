@@ -60,14 +60,14 @@ export function BarberAppShell() {
   }
 
   useEffect(() => {
-    if (!store.hydrated) return;
+    if (!store.hydrated || !store.authReady) return;
     if (
       PROTECTED_CUSTOMER_VIEWS.includes(currentView) &&
       !store.currentCustomer
     ) {
       router.replace(`/login?redirect=${currentView}`);
     }
-  }, [store.hydrated, store.currentCustomer, currentView, router]);
+  }, [store.hydrated, store.authReady, store.currentCustomer, currentView, router]);
 
   const scrollToTop = () => {
     if (typeof window !== 'undefined') {
@@ -139,7 +139,7 @@ export function BarberAppShell() {
       />
 
       <main className="flex-1 w-full pb-24 lg:pb-12">
-        {!store.hydrated ? (
+        {!store.hydrated || !store.authReady ? (
           <div className="max-w-6xl mx-auto px-4 md:px-6 pt-6 md:pt-8 space-y-6 animate-pulse">
             <div className="h-64 rounded-2xl bg-zinc-900/70 border border-zinc-800" />
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
