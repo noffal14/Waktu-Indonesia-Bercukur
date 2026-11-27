@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { verifyCapsterRequest, CapsterAuthError, capsterErrorResponse } from '@/lib/server/capster-auth';
-import { getOperationalSessionKey, getOperationalHoursForDate, generateHourSlots, parseWibEpochMs, getWibParts, LATE_TOLERANCE_MINUTES, RESCHEDULE_MIN_LEAD_MINUTES } from '@/lib/barbershop-config';
+import { getOperationalSessionKey, getOperationalHoursForDate, generateHourSlots, parseWibEpochMs, getWibParts, formatWibIsoDateTime, LATE_TOLERANCE_MINUTES, RESCHEDULE_MIN_LEAD_MINUTES } from '@/lib/barbershop-config';
 import { calculateServicesPricing, getInitialSystemPromos, isPromoActiveNow } from '@/lib/services-catalog';
 import { appendTransactionOnce, updateTransactionByCode, upsertCustomerByWhatsApp } from '@/lib/google-sheets';
 import { enqueueSheetSync } from '@/lib/sheets-outbox';
@@ -89,7 +89,7 @@ async function syncCustomer(customer: any, visitCount?: number, lastVisit?: stri
       'Nama': customer.nama,
       'Nomor WhatsApp': customer.nomorWhatsApp,
       'Email': customer.email || '',
-      'Tanggal Daftar': new Date(customer.dibuatPada || Date.now()).toISOString(),
+      'Tanggal Daftar': formatWibIsoDateTime(Number(customer.dibuatPada || Date.now())),
       'Kunjungan Terakhir': lastVisit || '',
       'Total Kunjungan': visitCount ?? 0,
     });
