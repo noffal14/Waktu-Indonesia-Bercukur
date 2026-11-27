@@ -9,9 +9,14 @@ function emailForPhone(phone: string) {
 }
 async function getUid(request: Request) {
   const authorization = request.headers.get('authorization') || '';
-  const token = authorization.match(/^Bearer\\s+(.+)$/i)?.[1];
+  const token = authorization.match(/^Bearer\s+(.+)$/i)?.[1];
   if (!token) throw new Error('AUTH_REQUIRED');
-  const decoded = await getAdminAuth().verifyIdToken(token, true);
+  let decoded;
+  try {
+    decoded = await getAdminAuth().verifyIdToken(token, true);
+  } catch {
+    throw new Error('AUTH_REQUIRED');
+  }
   if (decoded.role === 'capster') throw new Error('FORBIDDEN');
   return decoded;
 }
