@@ -39,6 +39,7 @@ export function useBarberStore() {
     createInitialSystemState()
   );
   const [hydrated, setHydrated] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [browserOnline, setBrowserOnline] = useState(true);
   const [sessionRole, setSessionRole] = useState<SessionRole>(null);
@@ -196,10 +197,15 @@ export function useBarberStore() {
   }, [hydrated, sessionRole]);
 
   useEffect(() => {
-    if (!hydrated || !firebaseAuth) return;
+    if (!hydrated) return;
+    if (!firebaseAuth) {
+      setAuthReady(true);
+      return;
+    }
     let active = true;
     const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
       if (!active) return;
+      setAuthReady(true);
       if (!user) {
         setCustomerSessionId(null);
         setLoggedInCapsterId(null);
@@ -1027,6 +1033,7 @@ export function useBarberStore() {
 
   return {
     hydrated,
+    authReady,
     dbState,
     nowMs,
     todayStr,
