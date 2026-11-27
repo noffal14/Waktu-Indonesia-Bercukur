@@ -119,11 +119,14 @@ export function LoginPageShell() {
   ]);
 
   useEffect(() => {
-    const savedMessage = window.sessionStorage.getItem('wib_capster_session_message');
-    if (savedMessage) {
-      setCapsterError(savedMessage);
-      window.sessionStorage.removeItem('wib_capster_session_message');
-    }
+    const timer = window.setTimeout(() => {
+      const savedMessage = window.sessionStorage.getItem('wib_capster_session_message');
+      if (savedMessage) {
+        setCapsterError(savedMessage);
+        window.sessionStorage.removeItem('wib_capster_session_message');
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const handleCapsterSubmit = async (e: React.FormEvent) => {
