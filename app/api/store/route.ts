@@ -599,10 +599,16 @@ async function handleCapsterAction(action: StoreAction, body: any) {
         return fail(400, 'Harga akhir walk-in tidak valid.', 'VALIDATION_ERROR');
       }
       const customerRef = q.customerUid ? db.collection('customers').doc(q.customerUid) : null;
+      const activeQueueRef = q.customerUid && q.operationalDayKey
+        ? db.collection('activeQueues').doc(String(q.operationalDayKey) + '_' + String(q.customerUid))
+        : null;
       const completed = await db.runTransaction(async (tx) => {
         const current = await tx.get(ref);
         if (!current.exists || current.data()?.status !== 'In-Service') throw new Error('INVALID_STATE');
-        const customerSnap = customerRef ? await tx.get(customerRef) : null;
+        const [customerSnap, activeQueueSnap] = await Promise.all([
+          customerRef ? tx.get(customerRef) : Promise.resolve(null),
+          activeQueueRef ? tx.get(activeQueueRef) : Promise.resolve(null),
+        ]);
         const completedQueue = {
           ...current.data(),
           status: 'Selesai', waktuSelesai: now, durasiAktual: actualDuration,
@@ -617,6 +623,9 @@ async function handleCapsterAction(action: StoreAction, body: any) {
           hargaFinal: finalTotal, sheetSyncStatus: 'pending',
         });
         tx.set(publicRef, { status: 'Selesai', waktuSelesai: now }, { merge: true });
+        if (activeQueueSnap?.exists && activeQueueSnap.data()?.queueId === id && activeQueueRef) {
+          tx.delete(activeQueueRef);
+        }
         let customer = customerSnap?.data() || null;
         let visits = 0;
         if (customerSnap?.exists && customerRef) {
