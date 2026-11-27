@@ -11,7 +11,7 @@
 7. Deploy rules dan index:
 
    ```bash
-   npx firebase deploy --only firestore:rules,firestore:indexes
+   npm run deploy:firestore
    ```
 
 7. Isi `CAPSTER_INITIAL_PASSWORD` (minimal 12 karakter dan unik) di environment lokal/server, lalu jalankan seed sekali:
