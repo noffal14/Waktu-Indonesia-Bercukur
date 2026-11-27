@@ -1,5 +1,5 @@
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
-import { adminDb } from '@/lib/firebase-admin';
+import { getAdminDb } from '@/lib/firebase-admin';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,9 +30,10 @@ export async function GET(request: Request) {
   const openingHour = p.weekday === 'Sat' || p.weekday === 'Sun' ? 10 : 12;
   const beforeOpening = Number(p.hour) < openingHour;
   const sessionKey = beforeOpening ? addDate(today, -1) : today;
-  const sessionRef = adminDb.collection('queueSessions').doc(sessionKey);
+  const db = getAdminDb();
+  const sessionRef = db.collection('queueSessions').doc(sessionKey);
 
-  await adminDb.runTransaction(async (tx) => {
+  await db.runTransaction(async (tx) => {
     const current = await tx.get(sessionRef);
     if (current.exists && current.data()?.resetApplied === true) return;
     tx.set(sessionRef, {
@@ -41,13 +42,13 @@ export async function GET(request: Request) {
     }, { merge: true });
   });
 
-  const stale = await adminDb.collection('queuePrivate')
+  const stale = await db.collection('queuePrivate')
     .where('status', '==', 'Waiting')
     .where('operationalDayKey', '<', sessionKey)
     .limit(400).get();
 
   if (!stale.empty) {
-    const batch = adminDb.batch();
+    const batch = db.batch();
     stale.docs.forEach((doc) => batch.update(doc.ref, {
       status: 'Kedaluwarsa', expiredAt: Timestamp.now(), expirationReason: 'daily-reset',
     }));
