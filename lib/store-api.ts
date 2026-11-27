@@ -5,6 +5,7 @@ export type StoreApiResult<T = Record<string, unknown>> = {
   message?: string;
   errorCode?: string;
   data?: T;
+  conflictBookings?: unknown[];
 };
 
 export async function callStoreApi<T = Record<string, unknown>>(
@@ -37,6 +38,7 @@ export async function callStoreApi<T = Record<string, unknown>>(
         ok: false,
         errorCode: result.errorCode || 'INVALID_STATE',
         message: result.message || 'Aksi gagal disimpan.',
+        conflictBookings: Array.isArray(result.conflictBookings) ? result.conflictBookings : undefined,
       };
     }
     return { ok: true, data: result.data as T };
