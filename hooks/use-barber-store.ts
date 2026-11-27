@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createUserWithEmailAndPassword, EmailAuthProvider, onAuthStateChanged, reauthenticateWithCredential, signInWithEmailAndPassword, signOut, updatePassword } from 'firebase/auth';
-import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, doc, getDocFromCache, onSnapshot, query, where } from 'firebase/firestore';
 import { firebaseAuth, firestore } from '@/lib/firebase-client';
 import { callCustomerAuthApi, callStoreApi } from '@/lib/store-api';
 import {
@@ -224,6 +224,15 @@ export function useBarberStore() {
         if (token.claims.role === 'capster') {
           const sessionId = window.sessionStorage.getItem('wib_capster_session_id');
           if (!sessionId) return; // First login creates its server session after Firebase sign-in.
+
+          if (typeof navigator !== 'undefined' && !navigator.onLine) {
+            setSyncStatus('offline');
+            setLoggedInCapsterId('hasan');
+            setCustomerSessionId(null);
+            setSessionRole('capster');
+            return;
+          }
+
           const heartbeat = await fetch('/api/capster/heartbeat', {
             method: 'POST',
             headers: {
@@ -236,8 +245,8 @@ export function useBarberStore() {
           if (!heartbeat.ok) {
             window.sessionStorage.removeItem('wib_capster_session_id');
             const expiryMessage = 'Sesi berakhir karena akun masuk di perangkat lain';
-      window.sessionStorage.setItem('wib_capster_session_message', expiryMessage);
-      setCapsterSessionMessage(expiryMessage);
+            window.sessionStorage.setItem('wib_capster_session_message', expiryMessage);
+            setCapsterSessionMessage(expiryMessage);
             if (firebaseAuth) await signOut(firebaseAuth).catch(() => undefined);
             return;
           }
@@ -246,7 +255,8 @@ export function useBarberStore() {
           setSessionRole('capster');
           return;
         }
-        if (user.email?.endsWith('@pelanggan.waktu-indonesia.app')) {
+        const customerEmailMatch = user.email?.match(/^(628\\d{8,12})@pelanggan\\.waktu-indonesia\\.app$/);
+        if (customerEmailMatch) {
           const result = await callCustomerAuthApi<Customer>('GET');
           if (!active) return;
           if (result.ok && result.data) {
@@ -255,6 +265,28 @@ export function useBarberStore() {
             setCustomerSessionId(user.uid);
             setLoggedInCapsterId(null);
             setSessionRole('pelanggan');
+          } else if (typeof navigator !== 'undefined' && !navigator.onLine && firestore) {
+            try {
+              const cachedProfile = await getDocFromCache(doc(firestore, 'customers', user.uid));
+              if (!active) return;
+              const data = cachedProfile.data();
+              if (cachedProfile.exists() && data?.nomorWhatsApp === customerEmailMatch[1]) {
+                const customer = { ...data, id: user.uid, passwordHash: '' } as Customer;
+                setDbState((previous) => ({ ...previous, customers: [customer] }));
+                setCustomerSessionId(user.uid);
+                setLoggedInCapsterId(null);
+                setSessionRole('pelanggan');
+                setSyncStatus('offline');
+              } else {
+                setCustomerSessionId(null);
+                setSessionRole(null);
+                if (firebaseAuth) await signOut(firebaseAuth).catch(() => undefined);
+              }
+            } catch {
+              setCustomerSessionId(null);
+              setSessionRole(null);
+              if (firebaseAuth) await signOut(firebaseAuth).catch(() => undefined);
+            }
           } else {
             setCustomerSessionId(null);
             setSessionRole(null);
@@ -483,6 +515,13 @@ export function useBarberStore() {
     action: string,
     payload: Record<string, unknown> = {}
   ): Promise<ServiceResult<T>> => {
+    if (isOfflineRef.current) {
+      return {
+        ok: false,
+        errorCode: 'INVALID_STATE',
+        message: 'Koneksi terputus. Sambungkan internet sebelum menyimpan perubahan.',
+      };
+    }
     const result = await callStoreApi<T>(action, payload);
     if (!result.ok) {
       return {
