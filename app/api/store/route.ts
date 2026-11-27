@@ -99,7 +99,7 @@ async function syncCustomer(customer: any, visitCount?: number, lastVisit?: stri
       'Nama': customer.nama,
       'Nomor WhatsApp': customer.nomorWhatsApp,
       'Email': customer.email || '',
-      'Tanggal Daftar': new Date(customer.dibuatPada || Date.now()).toISOString(),
+      'Tanggal Daftar': formatWibIsoDateTime(Number(customer.dibuatPada || Date.now())),
       'Kunjungan Terakhir': lastVisit || '',
       'Total Kunjungan': visitCount ?? 0,
     });
