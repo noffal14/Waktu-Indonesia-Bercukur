@@ -26,11 +26,11 @@ export async function GET(request: Request) {
         valueRenderOption: 'UNFORMATTED_VALUE',
       }),
       sheets.spreadsheets.values.get({
-        spreadsheetId, range: `'${SHEET_TABS.transactions}'!A1:Z101`,
+        spreadsheetId, range: `'${SHEET_TABS.transactions}'!A:Z`,
         valueRenderOption: 'UNFORMATTED_VALUE',
       }),
       sheets.spreadsheets.values.get({
-        spreadsheetId, range: `'${SHEET_TABS.customers}'!A1:Z101`,
+        spreadsheetId, range: `'${SHEET_TABS.customers}'!A:Z`,
         valueRenderOption: 'UNFORMATTED_VALUE',
       }),
     ]);
@@ -44,11 +44,17 @@ export async function GET(request: Request) {
 
     const transactionHeaders = transactionRows[0] ?? [];
     const dateColumn = transactionHeaders.findIndex((header) => normalizeHeader(header) === normalizeHeader('Tanggal'));
+    const toIsoDate = (value: unknown) => {
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return new Date(Date.UTC(1899, 11, 30) + value * 86_400_000).toISOString().slice(0, 10);
+      }
+      return String(value ?? '').slice(0, 10);
+    };
     const filteredTransactions = transactionRows.length
       ? [transactionHeaders, ...transactionRows.slice(1).filter((row) => {
-          const date = dateColumn >= 0 ? String(row[dateColumn] ?? '').slice(0, 10) : '';
+          const date = dateColumn >= 0 ? toIsoDate(row[dateColumn]) : '';
           return (!dateFrom || !date || date >= dateFrom) && (!dateTo || !date || date <= dateTo);
-        })].slice(0, 101)
+        }).slice(-100)]
       : [];
 
     const customerHeaders = customerRows[0] ?? [];
@@ -58,7 +64,7 @@ export async function GET(request: Request) {
       ? [customerHeaders, ...customerRows.slice(1).filter((row) => !search || [
           nameColumn >= 0 ? row[nameColumn] : '',
           phoneColumn >= 0 ? row[phoneColumn] : '',
-        ].some((value) => String(value ?? '').toLocaleLowerCase('id-ID').includes(search)))].slice(0, 101)
+        ].some((value) => String(value ?? '').toLocaleLowerCase('id-ID').includes(search))).slice(-100)]
       : [];
 
     return Response.json({
