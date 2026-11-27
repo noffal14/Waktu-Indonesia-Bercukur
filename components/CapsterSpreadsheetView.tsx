@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, RefreshCw, Search } from 'lucide-react';
 import { firebaseAuth } from '@/lib/firebase-client';
@@ -32,6 +34,7 @@ function DataTable({ rows }: { rows: SheetRows }) {
 }
 
 export function CapsterSpreadsheetView() {
+  const router = useRouter();
   const [summary, setSummary] = useState<SheetRows>([]);
   const [transactions, setTransactions] = useState<SheetRows>([]);
   const [customers, setCustomers] = useState<SheetRows>([]);
@@ -76,7 +79,61 @@ export function CapsterSpreadsheetView() {
     }
   }, [dateFrom, dateTo, customerSearch]);
 
-  useEffect(() => { void loadData(); }, [loadData]);
+  useEffect(() => {
+    if (!firebaseAuth) {
+      setError('Firebase belum dikonfigurasi.');
+      return;
+    }
+
+    let disposed = false;
+    let heartbeatTimer: number | undefined;
+    let heartbeatBusy = false;
+
+    const unsubscribe = onAuthStateChanged(firebaseAuth, (user) => {
+      if (!user) {
+        setError('Sesi capster tidak aktif. Silakan masuk kembali.');
+        router.replace('/login?role=capster');
+        return;
+      }
+
+      const heartbeat = async () => {
+        if (disposed || heartbeatBusy) return;
+        heartbeatBusy = true;
+        try {
+          const sessionId = window.sessionStorage.getItem('wib_capster_session_id');
+          if (!sessionId) throw new Error('Sesi capster tidak ditemukan.');
+          const response = await fetch('/api/capster/heartbeat', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${await user.getIdToken()}`,
+              'x-capster-session-id': sessionId,
+            },
+            cache: 'no-store',
+          });
+          if (response.status === 401 || response.status === 403) {
+            await signOut(firebaseAuth);
+            router.replace('/login?role=capster');
+          }
+        } catch {
+          // Gangguan jaringan sementara tidak menghapus sesi lokal.
+        } finally {
+          heartbeatBusy = false;
+        }
+      };
+
+      void loadData();
+      void heartbeat();
+      if (heartbeatTimer === undefined) {
+        heartbeatTimer = window.setInterval(() => void heartbeat(), 30_000);
+      }
+    });
+
+    return () => {
+      disposed = true;
+      unsubscribe();
+      if (heartbeatTimer !== undefined) window.clearInterval(heartbeatTimer);
+    };
+  }, [loadData, router]);
 
   return (
     <main className="min-h-screen bg-[#0B0B0D] px-4 py-6 text-stone-100 md:px-6 md:py-8">
