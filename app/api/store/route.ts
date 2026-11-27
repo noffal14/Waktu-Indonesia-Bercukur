@@ -38,6 +38,29 @@ function categoriesFor(lines: Array<{ kategoriNama?: string }>) {
   }
   return Array.from(labels).join(', ');
 }
+function persistSheetSyncJobInTransaction(
+  tx: FirebaseFirestore.Transaction,
+  id: string,
+  operation: 'appendTransaction' | 'updateTransaction' | 'upsertCustomer',
+  values: Record<string, string | number | null | undefined>,
+  options: { bookingCode?: string; sourcePath?: string; sourceId?: string } = {}
+) {
+  const jobRef = getAdminDb().collection('sheetSyncQueue').doc(id);
+  tx.set(jobRef, {
+    id,
+    operation,
+    values,
+    bookingCode: options.bookingCode || null,
+    sourcePath: options.sourcePath || null,
+    sourceId: options.sourceId || null,
+    status: 'pending',
+    attempts: 0,
+    runAfter: Date.now(),
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+}
+
 function bookingSheetValues(booking: any, customer: any, status: string, finalTotal?: number) {
   const lines = Array.isArray(booking.layananDipilih) ? booking.layananDipilih : [];
   const normal = Number(booking.subtotalHarga || 0);
@@ -68,6 +91,12 @@ async function syncBookingCreated(id: string, booking: any, customer: any) {
   try {
     const result = await appendTransactionOnce(bookingSheetValues(booking, customer, 'Booked (harga final dikonfirmasi capster)'));
     await setSheetStatus(ref, 'synced', { sheetRowRef: result.rowNumber || null, sheetSyncError: FieldValue.delete() });
+    await getAdminDb().collection('sheetSyncQueue').doc(`booking-${id}-append`).set({
+      status: 'synced',
+      syncedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+      lastError: FieldValue.delete(),
+    }, { merge: true });
   } catch (error) {
     await setSheetStatus(ref, 'failed', { sheetSyncError: String(error).slice(0, 500), sheetSyncAttempts: FieldValue.increment(1) });
     await enqueueSheetSync(`booking-${id}-append`, 'appendTransaction', bookingSheetValues(booking, customer, 'Booked (harga final dikonfirmasi capster)'), { sourcePath: 'bookingPrivate', sourceId: id });
@@ -78,6 +107,12 @@ async function syncBookingFinal(id: string, booking: any, customer: any, status:
   try {
     await updateTransactionByCode(booking.kodeTiket, bookingSheetValues(booking, customer, status, finalTotal));
     await setSheetStatus(ref, 'synced', { sheetSyncError: FieldValue.delete(), sheetSyncAttempts: FieldValue.increment(1) });
+    await getAdminDb().collection('sheetSyncQueue').doc(`booking-${id}-final`).set({
+      status: 'synced',
+      syncedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+      lastError: FieldValue.delete(),
+    }, { merge: true });
   } catch (error) {
     await setSheetStatus(ref, 'failed', { sheetSyncError: String(error).slice(0, 500), sheetSyncAttempts: FieldValue.increment(1) });
     await enqueueSheetSync(`booking-${id}-final`, 'updateTransaction', bookingSheetValues(booking, customer, status, finalTotal), { bookingCode: booking.kodeTiket, sourcePath: 'bookingPrivate', sourceId: id });
@@ -282,6 +317,13 @@ async function handleBookingCreate(uid: string, body: any) {
       nama: maskedName(customer.nama),
     });
     lockRefs.forEach((ref) => tx.set(ref, { status: 'Booked', bookingId: id, capsterId, tanggal: date, jam: coveredSlots[lockRefs.indexOf(ref)] }));
+    persistSheetSyncJobInTransaction(
+      tx,
+      `booking-${id}-append`,
+      'appendTransaction',
+      bookingSheetValues(data, customer, 'Booked (harga final dikonfirmasi capster)'),
+      { sourcePath: 'bookingPrivate', sourceId: id }
+    );
     return data;
   });
 
