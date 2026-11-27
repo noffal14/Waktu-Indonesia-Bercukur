@@ -5,7 +5,7 @@ import { enqueueSheetSync } from '@/lib/sheets-outbox';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 
-function bookingValues(booking: any) {
+export function bookingExpiredSheetValues(booking: any) {
   const lines = Array.isArray(booking.layananDipilih) ? booking.layananDipilih : [];
   const categories = new Set<string>();
   for (const line of lines) {
@@ -33,7 +33,7 @@ function bookingValues(booking: any) {
 }
 
 export async function syncBookingExpired(id: string, booking: any) {
-  const values = bookingValues(booking);
+  const values = bookingExpiredSheetValues(booking);
   const ref = getAdminDb().collection('bookingPrivate').doc(id);
   try {
     await updateTransactionByCode(String(booking.kodeTiket), values);
