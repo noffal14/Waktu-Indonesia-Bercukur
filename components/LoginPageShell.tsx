@@ -275,7 +275,7 @@ export function LoginPageShell() {
 
                     {(capsterError || store.capsterSessionMessage) && (
                       <div className="p-3.5 rounded-xl bg-rose-950/50 border border-rose-500/40 text-xs sm:text-sm text-rose-200">
-                        {capsterError}
+                        {capsterError || store.capsterSessionMessage}
                       </div>
                     )}
 
