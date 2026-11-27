@@ -68,7 +68,10 @@ interface BookingViewProps {
   }) => ServiceResult<{
     booking: DataBooking;
     state: BarberDatabaseState;
-  }>;
+  }> | Promise<ServiceResult<{
+    booking: DataBooking;
+    state: BarberDatabaseState;
+  }>>;
   onNavigate: (view: AppView) => void;
 }
 
@@ -180,7 +183,7 @@ export function BookingView({
     });
   };
 
-  const handleConfirmBooking = (e: React.FormEvent) => {
+  const handleConfirmBooking = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
 
@@ -196,7 +199,7 @@ export function BookingView({
       return;
     }
 
-    const res = onCreateBooking({
+    const res = await onCreateBooking({
       customerId: currentCustomer.id,
       capsterId: selectedCapster.id,
       tanggal: effectiveTanggal,
