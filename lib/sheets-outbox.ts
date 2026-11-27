@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { FieldValue } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
 import {
   appendTransactionOnce,
@@ -34,6 +34,21 @@ export async function enqueueSheetSync(
 
 export async function drainSheetSyncQueue(maxItems = 50) {
   const db = getAdminDb();
+  const staleProcessing = await db.collection('sheetSyncQueue')
+    .where('status', '==', 'processing')
+    .where('processingStartedAt', '<=', Timestamp.fromMillis(Date.now() - 10 * 60_000))
+    .limit(100).get();
+  if (!staleProcessing.empty) {
+    const recover = db.batch();
+    staleProcessing.docs.forEach((doc) => recover.update(doc.ref, {
+      status: 'failed',
+      runAfter: Date.now(),
+      lastError: 'Retry worker lease expired before completion.',
+      updatedAt: FieldValue.serverTimestamp(),
+    }));
+    await recover.commit();
+  }
+
   const snapshot = await db.collection('sheetSyncQueue')
     .where('status', 'in', ['pending', 'failed'])
     .where('runAfter', '<=', Date.now())
