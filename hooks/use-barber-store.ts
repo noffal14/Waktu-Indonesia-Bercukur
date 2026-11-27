@@ -255,7 +255,7 @@ export function useBarberStore() {
           setSessionRole('capster');
           return;
         }
-        const customerEmailMatch = user.email?.match(/^(628\\d{8,12})@pelanggan\\.waktu-indonesia\\.app$/);
+        const customerEmailMatch = user.email?.match(/^(628\d{8,12})@pelanggan\.waktu-indonesia\\.app$/);
         if (customerEmailMatch) {
           const result = await callCustomerAuthApi<Customer>('GET');
           if (!active) return;
@@ -555,6 +555,7 @@ export function useBarberStore() {
         return { ok: false, errorCode: 'INVALID_STATE', message: 'Firebase Authentication belum dikonfigurasi.' };
       }
 
+      if (isOfflineRef.current) return { ok: false, errorCode: 'INVALID_STATE', message: 'Sambungkan internet untuk membuat akun.' };
       const syntheticEmail = `${phone.normalized}@pelanggan.waktu-indonesia.app`;
       authActionInProgressRef.current = true;
       try {
@@ -602,6 +603,7 @@ export function useBarberStore() {
 
   const loginCustomer = useCallback(
     async (nomorWhatsApp: string, password: string): Promise<ServiceResult<{ customer: Customer; state: BarberDatabaseState }>> => {
+      if (isOfflineRef.current) return { ok: false, errorCode: 'INVALID_STATE', message: 'Sambungkan internet untuk masuk.' };
       const phone = validateIndonesianWhatsApp(nomorWhatsApp);
       if (!phone.valid) return { ok: false, errorCode: 'VALIDATION_ERROR', message: phone.error };
       if (!password) return { ok: false, errorCode: 'VALIDATION_ERROR', message: 'Password wajib diisi.' };
@@ -649,6 +651,7 @@ export function useBarberStore() {
       currentPassword?: string;
       newPassword?: string;
     }): Promise<ServiceResult<{ customer: Customer }>> => {
+      if (isOfflineRef.current) return { ok: false, errorCode: 'INVALID_STATE', message: 'Sambungkan internet untuk memperbarui profil.' };
       if (!customerSessionId || !firebaseAuth?.currentUser) {
         return { ok: false, errorCode: 'AUTH_REQUIRED', message: 'Sesi pelanggan tidak aktif.' };
       }
@@ -682,6 +685,7 @@ export function useBarberStore() {
   );
 
   const deleteCustomerAccount = useCallback(async (): Promise<ServiceResult<unknown>> => {
+    if (isOfflineRef.current) return { ok: false, errorCode: 'INVALID_STATE', message: 'Sambungkan internet untuk menghapus akun.' };
     if (!customerSessionId || !firebaseAuth?.currentUser) {
       return { ok: false, errorCode: 'AUTH_REQUIRED', message: 'Sesi pelanggan tidak aktif.' };
     }
@@ -1051,6 +1055,7 @@ export function useBarberStore() {
       newPassword: string;
       confirmPassword: string;
     }): Promise<ServiceResult<BarberDatabaseState>> => {
+      if (isOfflineRef.current) return { ok: false, errorCode: 'INVALID_STATE', message: 'Sambungkan internet untuk mengganti password.' };
       const user = firebaseAuth?.currentUser;
       if (!user?.email) {
         return { ok: false, errorCode: 'AUTH_REQUIRED', message: 'Sesi Firebase capster tidak aktif.' };
