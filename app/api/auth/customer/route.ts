@@ -2,8 +2,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { validateIndonesianWhatsApp } from '@/lib/barber-service';
 import { formatWibIsoDateTime } from '@/lib/barbershop-config';
-import { upsertCustomerByWhatsApp } from '@/lib/google-sheets';
-import { enqueueSheetSync } from '@/lib/sheets-outbox';
+import { drainSheetSyncQueue } from '@/lib/sheets-outbox';
 
 export const dynamic = 'force-dynamic';
 
@@ -93,19 +92,9 @@ export async function POST(request: Request) {
     });
 
     const profile = (await customerRef.get()).data();
-    const sheetValues = customerSheetValues(profile);
-    const sheetJobId = `customer-${phoneCheck.normalized}-register`;
-    try {
-      await upsertCustomerByWhatsApp(sheetValues);
-      await db.collection('sheetSyncQueue').doc(sheetJobId).set({
-        status: 'synced', syncedAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(), lastError: FieldValue.delete(),
-      }, { merge: true });
-    } catch {
-      await enqueueSheetSync(sheetJobId, 'upsertCustomer', sheetValues, {
-        sourcePath: 'customers', sourceId: decoded.uid,
-      });
-    }
+    await drainSheetSyncQueue(50).catch((error) => {
+      console.error('[customer-register-sheet-outbox]', error);
+    });
     return Response.json({ ok: true, customer: { ...profile, id: decoded.uid, passwordHash: '' } }, { status: 201 });
   } catch (error) {
     const code = error instanceof Error ? error.message : '';
@@ -157,19 +146,9 @@ export async function PATCH(request: Request) {
       persistCustomerSheetJob(tx, jobId, next, decoded.uid);
       return { ...next, sheetJobId: jobId };
     });
-    const sheetValues = customerSheetValues(updated);
-    const sheetJobId = String(updated.sheetJobId);
-    try {
-      await upsertCustomerByWhatsApp(sheetValues);
-      await getAdminDb().collection('sheetSyncQueue').doc(sheetJobId).set({
-        status: 'synced', syncedAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(), lastError: FieldValue.delete(),
-      }, { merge: true });
-    } catch {
-      await enqueueSheetSync(sheetJobId, 'upsertCustomer', sheetValues, {
-        sourcePath: 'customers', sourceId: decoded.uid,
-      });
-    }
+    await drainSheetSyncQueue(50).catch((error) => {
+      console.error('[customer-update-sheet-outbox]', error);
+    });
     const { sheetJobId: _sheetJobId, ...publicCustomer } = updated;
     return Response.json({ ok: true, customer: { ...publicCustomer, id: decoded.uid, passwordHash: '' } });
   } catch (error) {
