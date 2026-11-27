@@ -1,6 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { validateIndonesianWhatsApp } from '@/lib/barber-service';
+import { formatWibIsoDateTime } from '@/lib/barbershop-config';
 import { upsertCustomerByWhatsApp } from '@/lib/google-sheets';
 import { enqueueSheetSync } from '@/lib/sheets-outbox';
 
@@ -65,7 +66,7 @@ export async function POST(request: Request) {
       'Nama': nama,
       'Nomor WhatsApp': phoneCheck.normalized,
       'Email': String(body.email || '').trim().toLowerCase(),
-      'Tanggal Daftar': new Date(profile?.dibuatPada || Date.now()).toISOString(),
+      'Tanggal Daftar': formatWibIsoDateTime(Number(profile?.dibuatPada || Date.now())),
       'Kunjungan Terakhir': '',
       'Total Kunjungan': 0,
     };
@@ -121,7 +122,7 @@ export async function PATCH(request: Request) {
       'Nama': updated?.nama || '',
       'Nomor WhatsApp': updated?.nomorWhatsApp || '',
       'Email': updated?.email || '',
-      'Tanggal Daftar': new Date(updated?.dibuatPada || Date.now()).toISOString(),
+      'Tanggal Daftar': formatWibIsoDateTime(Number(updated?.dibuatPada || Date.now())),
       'Kunjungan Terakhir': updated?.kunjunganTerakhir || '',
       'Total Kunjungan': Number(updated?.totalKunjungan || 0),
     };
