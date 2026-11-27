@@ -17,10 +17,15 @@ export async function GET(request: Request) {
 
   await db.runTransaction(async (tx) => {
     const current = await tx.get(sessionRef);
-    if (current.exists && current.data()?.resetApplied === true) return;
+    const previous = current.data() || {};
+    if (previous.resetApplied === true) return;
     tx.set(sessionRef, {
-      sessionKey, kuotaMaksimal: 15, kuotaTerpakai: 0, lastNumber: 0,
-      resetApplied: true, resetAt: FieldValue.serverTimestamp(),
+      sessionKey,
+      kuotaMaksimal: Number(previous.kuotaMaksimal ?? 15),
+      kuotaTerpakai: 0,
+      lastNumber: 0,
+      resetApplied: true,
+      resetAt: FieldValue.serverTimestamp(),
     }, { merge: true });
   });
 
