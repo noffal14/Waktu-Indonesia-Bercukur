@@ -519,7 +519,12 @@ async function handleCapsterAction(action: StoreAction, body: any) {
       if (!pricing.lines.length) return fail(400, 'Layanan walk-in tidak valid.', 'VALIDATION_ERROR');
       const elapsed = q.waktuMulai ? Math.max(1, Math.round((now - q.waktuMulai) / 60000)) : 45;
       const actualDuration = Number(body.durationMinutes) > 0 ? Math.round(Number(body.durationMinutes)) : elapsed;
-      const finalTotal = pricing.totalEstimasiMin;
+      const finalTotal = typeof body.finalTotal === 'number'
+        ? Math.round(body.finalTotal)
+        : pricing.totalEstimasiMin;
+      if (finalTotal < 0 || finalTotal > pricing.subtotalHarga) {
+        return fail(400, 'Harga akhir walk-in tidak valid.', 'VALIDATION_ERROR');
+      }
       const customerRef = q.customerUid ? db.collection('customers').doc(q.customerUid) : null;
       const completed = await db.runTransaction(async (tx) => {
         const current = await tx.get(ref);
