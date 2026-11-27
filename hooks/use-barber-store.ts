@@ -423,8 +423,8 @@ export function useBarberStore() {
   );
 
   const queueEstimation: QueueEstimationSummary = useMemo(
-    () => barberService.getQueueEstimation(dbState, operationalDayKey),
-    [dbState, operationalDayKey]
+    () => barberService.getQueueEstimation(dbState, operationalDayKey, nowMs),
+    [dbState, operationalDayKey, nowMs]
   );
 
   const currentCustomer: Customer | null = useMemo(() => {
