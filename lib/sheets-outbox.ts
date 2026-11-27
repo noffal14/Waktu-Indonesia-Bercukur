@@ -66,8 +66,16 @@ export async function drainSheetSyncQueue(maxItems = 50) {
     const phone = job.operation === 'upsertCustomer'
       ? String(values['Nomor WhatsApp'] || '').trim()
       : '';
-    const customerLockRef = phone
-      ? db.collection('sheetSyncLocks').doc('customer-' + phone)
+    const bookingCode = job.operation === 'appendTransaction' || job.operation === 'updateTransaction'
+      ? String(job.bookingCode || values['Kode Booking'] || '').trim()
+      : '';
+    const lockKey = phone
+      ? 'customer-' + phone
+      : bookingCode
+        ? 'transaction-' + bookingCode
+        : '';
+    const syncLockRef = lockKey
+      ? db.collection('sheetSyncLocks').doc(lockKey)
       : null;
 
     const claimed = await db.runTransaction(async (tx) => {
@@ -77,18 +85,18 @@ export async function drainSheetSyncQueue(maxItems = 50) {
       if (!['pending', 'failed'].includes(String(data.status))) return false;
       if (Number(data.runAfter || 0) > Date.now()) return false;
 
-      const customerLock = customerLockRef ? await tx.get(customerLockRef) : null;
-      const lockData = customerLock?.data();
+      const syncLock = syncLockRef ? await tx.get(syncLockRef) : null;
+      const lockData = syncLock?.data();
       const lockActive = Number(lockData?.leaseUntil || 0) > Date.now();
-      if (customerLock?.exists && lockActive && lockData?.ownerJobId !== item.id) return false;
+      if (syncLock?.exists && lockActive && lockData?.ownerJobId !== item.id) return false;
 
       tx.update(item.ref, {
         status: 'processing',
         processingStartedAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
-      if (customerLockRef) {
-        tx.set(customerLockRef, {
+      if (syncLockRef) {
+        tx.set(syncLockRef, {
           ownerJobId: item.id,
           leaseUntil: Date.now() + 10 * 60_000,
           updatedAt: FieldValue.serverTimestamp(),
@@ -102,12 +110,12 @@ export async function drainSheetSyncQueue(maxItems = 50) {
       continue;
     }
 
-    const releaseCustomerLock = async () => {
-      if (!customerLockRef) return;
+    const releaseSyncLock = async () => {
+      if (!syncLockRef) return;
       await db.runTransaction(async (tx) => {
-        const lock = await tx.get(customerLockRef);
+        const lock = await tx.get(syncLockRef);
         if (lock.exists && lock.data()?.ownerJobId === item.id) {
-          tx.delete(customerLockRef);
+          tx.delete(syncLockRef);
         }
       });
     };
@@ -143,7 +151,7 @@ export async function drainSheetSyncQueue(maxItems = 50) {
           sheetSyncError: FieldValue.delete(),
         }, { merge: true });
       }
-      await releaseCustomerLock();
+      await releaseSyncLock();
       synced += 1;
     } catch (error) {
       const attempts = Number(job.attempts || 0) + 1;
