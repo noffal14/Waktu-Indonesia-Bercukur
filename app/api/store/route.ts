@@ -340,7 +340,9 @@ async function handleBookingCustomerCancel(uid: string, id: string, reschedule?:
     const current = await tx.get(ref);
     const [scheduleSnap, ...lockSnaps] = await Promise.all([tx.get(newScheduleRef), ...newLockRefs.map((lock) => tx.get(lock))]);
     if (!current.exists || current.data()?.status !== 'Booked' || current.data()?.customerUid !== uid) throw new Error('INVALID_STATE');
-    if (scheduleSnap.data()?.isLibur) throw new Error('CAPSTER_OFF');
+    const targetSchedule = scheduleSnap.data();
+    if (targetSchedule?.isLibur) throw new Error('CAPSTER_OFF');
+    if (newSlots.some((slot) => Boolean(targetSchedule?.manualSlots?.[slot]?.tipe))) throw new Error('SLOT_TAKEN');
     if (lockSnaps.some((lock) => ['Booked', 'In-Service', 'Manual'].includes(String((lock.data() as FirebaseFirestore.DocumentData | undefined)?.status || '')) && (lock.data() as FirebaseFirestore.DocumentData | undefined)?.bookingId !== id)) throw new Error('SLOT_TAKEN');
     const booking = current.data()!;
     await releaseBookingLocks(tx, booking);
