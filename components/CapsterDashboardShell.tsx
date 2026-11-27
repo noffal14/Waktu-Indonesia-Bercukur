@@ -101,9 +101,9 @@ export function CapsterDashboardShell() {
           sessionRole={store.sessionRole}
           loggedInCapster={store.loggedInCapster}
           onRedirectHome={() => router.replace('/')}
-          onLogout={() => {
+          onLogout={async () => {
             setLoggingOut(true);
-            store.logoutCapster();
+            await store.logoutCapster();
             router.replace('/login?role=capster');
           }}
           onCallWalkin={store.callWalkin}
