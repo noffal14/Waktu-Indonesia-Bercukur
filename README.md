@@ -1,65 +1,75 @@
 # Waktu Indonesia Bercukur
 
-## Backend setup
+## 1. Menyiapkan Firebase
 
-Copy `.env.example` to `.env.local`. Never commit real credentials or service-account JSON.
-
-### Firebase
-
-1. Create a Firebase project. Enable Email/Password Authentication and Firestore.
-2. Register a Web App. Copy its settings into `NEXT_PUBLIC_FIREBASE_*`.
-3. Create a Firebase service account and set `FIREBASE_ADMIN_PROJECT_ID`, `FIREBASE_ADMIN_CLIENT_EMAIL`, and `FIREBASE_ADMIN_PRIVATE_KEY` on the server.
-4. Deploy the Firestore rules and index:
+1. Buat project di Firebase Console.
+2. Aktifkan Firebase Authentication dengan metode Email/Password.
+3. Buat Firestore Database.
+4. Daftarkan Web App dan salin konfigurasi ke variabel `NEXT_PUBLIC_FIREBASE_*`.
+5. Buat service account untuk Firebase Admin SDK. Simpan project ID, client email, dan private key di environment server sebagai `FIREBASE_ADMIN_*`.
+6. Deploy rules dan index:
 
    ```bash
    npx firebase deploy --only firestore:rules,firestore:indexes
    ```
 
-5. Set a strong one-time `CAPSTER_INITIAL_PASSWORD` (at least 12 characters) in `.env.local`, then run:
+7. Isi `CAPSTER_INITIAL_PASSWORD` (minimal 12 karakter dan unik) di environment lokal/server, lalu jalankan seed sekali:
 
    ```bash
    npm run seed:capster
    ```
 
-   The script creates or updates `hasan@waktu-indonesia.app` and attaches the `role=capster` custom claim. Do not reuse a sample or weak password.
+   Seed membuat atau memperbarui akun `hasan@waktu-indonesia.app` dan menempelkan custom claim `role=capster`. Jangan memasukkan password awal ke source code atau mengirimkannya di chat.
 
-### Google Sheets
+## 2. Menyiapkan Google Sheets
 
-Create a spreadsheet named `Keuangan_dan_Pelanggan_Waktu_Indonesia_Bercukur` with these tabs:
+Buat spreadsheet bernama `Keuangan_dan_Pelanggan_Waktu_Indonesia_Bercukur` dengan tab dan header baris pertama berikut.
 
-- `Rekap_Harian`
-- `Transaksi_Harian`
-- `Pengeluaran_Harian`
-- `Database_Pelanggan`
+### Transaksi_Harian
 
-Share it with the service-account email as an editor. Set `GOOGLE_SHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, and `GOOGLE_PRIVATE_KEY` in server-only environment variables. The API never sends service-account credentials to the browser.
+`Tanggal`, `Jam`, `Kode Booking`, `Nama Pelanggan`, `Nomor WhatsApp`, `Capster`, `Layanan (daftar)`, `Kategori`, `Harga Normal`, `Potongan Promo`, `Total Harga`, `Status`, `Sumber`.
 
-### Vercel
+### Database_Pelanggan
 
-Add all environment variables in the Vercel project settings. The `vercel.json` schedules the daily reset endpoint around the WIB opening times (03:00 and 05:00 UTC). Set a high-entropy `CRON_SECRET`; Vercel sends it as a Bearer authorization header for cron invocations.
+`Nama`, `Nomor WhatsApp`, `Email`, `Tanggal Daftar`, `Kunjungan Terakhir`, `Total Kunjungan`.
 
-## Current implementation status
+Buat juga tab `Rekap_Harian` (untuk formula ringkasan pendapatan, pengeluaran, dan laba bersih) serta `Pengeluaran_Harian`. Bagikan spreadsheet kepada service account Google dengan hak Editor. Isi `GOOGLE_SHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, dan `GOOGLE_PRIVATE_KEY` di environment server.
 
-Implemented on the feature branch:
+Semua penulisan transaksi memeriksa header sebelum menulis. Tab `Rekap_Harian` hanya dibaca, tidak pernah ditulis oleh aplikasi. Kegagalan sinkronisasi dimasukkan ke Firestore `sheetSyncQueue` dan dicoba ulang dengan backoff.
 
-- Firebase client initialization and lazy server-side Firebase Admin initialization.
-- One-time Hasan account seed with a Firebase custom role claim.
-- Capster login through Firebase Authentication.
-- Server-verified capster identity and a single active session with a 90-second stale-session window.
-- Client heartbeat every 30 seconds, session restoration across refresh in `sessionStorage`, and logout invalidation.
-- WIB server-time endpoint and authenticated daily queue reset endpoint.
-- Initial Firestore rules and composite index.
-- Server-side Google Sheets read access, schema/header validation helpers, idempotent transaction append helper, transaction update helper, and customer upsert helper.
-- Capster-only spreadsheet page with daily summary, date-filtered transactions, and customer search.
-- Baseline HTTP security headers.
+## 3. Environment dan deployment
 
-Not yet completed:
+Salin `.env.example` ke `.env.local`. Jangan commit nilai rahasia. Atur seluruh environment variable pada pengaturan project Vercel. Pastikan `CRON_SECRET` adalah secret acak yang kuat. Vercel mengirimkannya sebagai header `Authorization: Bearer ...` ke endpoint cron.
 
-- The existing `barberService` still stores queue, bookings, customers, schedule, promos, and profile data in browser `localStorage`. These business records have not yet been migrated to Firestore.
-- Queue quota allocation, booking slot locking, queue cancellation, schedule/promo/profile writes, and capster completion actions are not yet routed through server-verified Firestore transactions.
-- Realtime Firestore `onSnapshot` subscriptions and the connected/reconnecting/offline status indicator are not yet wired into the main customer and capster store.
-- Customer registration/login has not yet been migrated to Firebase Authentication with synthetic WhatsApp-based email addresses.
-- Google Sheets write helpers are not yet invoked by booking creation, walk-in completion, or service completion. Retry/idempotency metadata is not yet persisted to Firestore, and `Pengeluaran_Harian` write flow is not implemented.
-- Late-booking auto-cancellation and end-to-end build/runtime verification remain outstanding.
+Cron yang dikonfigurasi:
+- `/api/cron/daily-reset`: 03:00 dan 05:00 UTC untuk menutup sesi lama dan menginisialisasi sesi operasional WIB.
+- `/api/cron/booking-expiry`: setiap 5 menit untuk membatalkan booking lebih dari 15 menit terlambat.
+- `/api/cron/sheets-retry`: setiap 15 menit untuk mencoba ulang sinkronisasi spreadsheet.
 
-Keep the current browser-store behavior intact until those migrations are implemented and tested. Do not treat this branch as a complete production migration yet.
+## 4. Implementasi pada branch fitur
+
+- Firebase Authentication untuk pelanggan menggunakan email internal yang diturunkan dari nomor WhatsApp. UI tetap meminta nomor WhatsApp.
+- Akun Hasan menggunakan Firebase Auth custom claim `role=capster`, bukan password yang tertanam di kode.
+- Sesi capster satu perangkat: session ID di `sessionStorage`, heartbeat 30 detik, timeout 90 detik, dan pemeriksaan server untuk setiap API capster.
+- Data antrean, booking, jadwal, kuota, promosi, profil, dan pelanggan disimpan di Firestore.
+- Pelanggan hanya membaca data pribadi miliknya. Data publik antrean dan booking menggunakan nama tersamarkan.
+- Penulisan antrean dan booking melewati server. Kuota/counter serta penguncian slot multi-durasi memakai Firestore transaction.
+- Listener Firestore `onSnapshot` memperbarui halaman pelanggan dan capster. Jam UI dikoreksi dengan endpoint waktu server WIB.
+- Cron reset antrean mempertahankan kuota yang dikonfigurasi capster, mengatur ulang nomor, dan mengubah antrean Waiting dari sesi lama menjadi Kedaluwarsa.
+- Booking yang lewat toleransi 15 menit dibatalkan server-side dan slot dikosongkan.
+- Ketika menyelesaikan walk-in, capster memilih layanan. Ketika menyelesaikan booking, capster mengonfirmasi harga final.
+- Penulisan booking, pembatalan, walk-in selesai, dan database pelanggan tersambung ke Google Sheets. Outbox retry mencegah kegagalan sementara spreadsheet membatalkan transaksi.
+- Halaman `/capster/spreadsheet` menampilkan ringkasan, transaksi dengan filter tanggal, dan pencarian database pelanggan. API hanya mengirim data kepada capster dengan sesi valid.
+- Service lama tidak lagi membaca atau menulis data bisnis di localStorage. Sisa data localStorage dari versi lama sengaja tidak dihapus otomatis sebagai salinan lokal. Data historis lama belum diimpor otomatis ke Firestore.
+
+## 5. Verifikasi sebelum produksi
+
+Sebelum mengalihkan domain produksi atau merge ke `main`, lengkapi langkah berikut:
+
+1. Isi environment Vercel dengan Firebase dan Google service account yang benar.
+2. Deploy Firestore rules/indexes dan jalankan seed akun Hasan.
+3. Pastikan seluruh header sheet cocok persis dengan daftar di atas.
+4. Jalankan build GitHub Actions dan tes end-to-end dengan dua browser/perangkat: customer, capster, kuota penuh, slot bentrok, reschedule, pembatalan, sesi capster kedua, auto-expiry, dan retry Google Sheets.
+5. Impor atau arsipkan data historis localStorage versi sebelumnya secara terpisah jika diperlukan.
+
+Branch kerja ini tidak mengubah `main`. PR dibuat sebagai Draft sampai build dan tes end-to-end selesai.
