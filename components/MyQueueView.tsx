@@ -230,7 +230,8 @@ export function MyQueueView({
     dbState,
     reschedCapsterId,
     effectiveReschedDate,
-    reschedulingBooking?.id
+    reschedulingBooking?.id,
+    nowMs
   );
 
   return (
