@@ -341,7 +341,7 @@ async function handleBookingCustomerCancel(uid: string, id: string, reschedule?:
       tx.set(publicRef, { status: 'Canceled' }, { merge: true });
       persistSheetSyncJobInTransaction(
         tx,
-        `booking-${id}-final`,
+        `booking-${id}-final-${canceledAt}`,
         'updateTransaction',
         bookingSheetValues(canceledBooking, { nama: booking.nama, nomorWhatsApp: booking.nomorWhatsApp }, 'Batal', 0),
         { bookingCode: String(booking.kodeTiket), sourcePath: 'bookingPrivate', sourceId: id }
@@ -375,13 +375,14 @@ async function handleBookingCustomerCancel(uid: string, id: string, reschedule?:
     if (lockSnaps.some((lock) => ['Booked', 'In-Service', 'Manual'].includes(String((lock.data() as FirebaseFirestore.DocumentData | undefined)?.status || '')) && (lock.data() as FirebaseFirestore.DocumentData | undefined)?.bookingId !== id)) throw new Error('SLOT_TAKEN');
     const booking = current.data()!;
     await releaseBookingLocks(tx, booking);
-    const nextBooking = { ...booking, capsterId, tanggal: date, jamSlot: startSlot, slotTercakup: newSlots, waktuDiubah: Date.now() };
+    const rescheduledAt = Date.now();
+    const nextBooking = { ...booking, capsterId, tanggal: date, jamSlot: startSlot, slotTercakup: newSlots, waktuDiubah: rescheduledAt };
     tx.set(ref, nextBooking, { merge: true });
     tx.set(publicRef, { capsterId, tanggal: date, jamSlot: startSlot, slotTercakup: newSlots }, { merge: true });
     newLockRefs.forEach((lockRef, i) => tx.set(lockRef, { status: 'Booked', bookingId: id, capsterId, tanggal: date, jam: newSlots[i] }));
     persistSheetSyncJobInTransaction(
       tx,
-      `booking-${id}-final`,
+      `booking-${id}-final-${rescheduledAt}`,
       'updateTransaction',
       bookingSheetValues(nextBooking, { nama: nextBooking.nama, nomorWhatsApp: nextBooking.nomorWhatsApp }, 'Booked (harga final dikonfirmasi capster)'),
       { bookingCode: String(nextBooking.kodeTiket), sourcePath: 'bookingPrivate', sourceId: id }
@@ -524,7 +525,7 @@ async function handleCapsterAction(action: StoreAction, body: any) {
         }, { merge: true });
         persistSheetSyncJobInTransaction(
           tx,
-          `booking-${snap.id}-final`,
+          `booking-${snap.id}-final-${canceledAt}`,
           'updateTransaction',
           bookingSheetValues(canceledBooking, { nama: booking.nama, nomorWhatsApp: booking.nomorWhatsApp }, 'Batal', 0),
           { bookingCode: String(booking.kodeTiket), sourcePath: 'bookingPrivate', sourceId: snap.id }
@@ -795,7 +796,7 @@ async function handleCapsterAction(action: StoreAction, body: any) {
         }
         persistSheetSyncJobInTransaction(
           tx,
-          `booking-${id}-final`,
+          `booking-${id}-final-${now}`,
           'updateTransaction',
           bookingSheetValues(updated, customer, 'Selesai', finalTotal),
           { bookingCode: String(booking.kodeTiket), sourcePath: 'bookingPrivate', sourceId: id }
@@ -831,7 +832,7 @@ async function handleCapsterAction(action: StoreAction, body: any) {
       tx.set(publicRef, { status: 'Canceled', canceledAt }, { merge: true });
       persistSheetSyncJobInTransaction(
         tx,
-        `booking-${id}-final`,
+        `booking-${id}-final-${canceledAt}`,
         'updateTransaction',
         bookingSheetValues(canceledBooking, { nama: currentBooking.nama, nomorWhatsApp: currentBooking.nomorWhatsApp }, 'Batal', 0),
         { bookingCode: String(currentBooking.kodeTiket), sourcePath: 'bookingPrivate', sourceId: id }
