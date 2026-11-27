@@ -137,6 +137,14 @@ export function getWibParts(epochMs: number): WibDateParts {
   };
 }
 
+export function formatWibIsoDateTime(epochMs: number = Date.now()): string {
+  const parts = getWibParts(epochMs);
+  const hh = String(parts.hour).padStart(2, '0');
+  const mm = String(parts.minute).padStart(2, '0');
+  const ss = String(parts.second).padStart(2, '0');
+  return `${parts.dateStr}T${hh}:${mm}:${ss}+07:00`;
+}
+
 export function parseWibEpochMs(dateStr: string, hhmm: string): number {
   return Date.parse(`${dateStr}T${hhmm}:00+07:00`);
 }
