@@ -34,6 +34,7 @@ interface StatusViewProps {
   activeCustomerWalkin: DataAntreanWalkin | null;
   activeCustomerBooking: DataBooking | null;
   isOffline: boolean;
+  syncStatus: 'connecting' | 'connected' | 'reconnecting' | 'offline';
   lastSyncedFormatted: string;
   onRefresh: () => void;
   onNavigate: (view: AppView) => void;
@@ -48,6 +49,7 @@ export function StatusView({
   activeCustomerWalkin,
   activeCustomerBooking,
   isOffline,
+  syncStatus,
   lastSyncedFormatted,
   onRefresh,
   onNavigate,
@@ -135,16 +137,22 @@ export function StatusView({
             className={`px-3 py-2 rounded-xl border text-xs flex items-center gap-2 ${
               isOffline
                 ? 'bg-rose-950/40 border-rose-500/40 text-rose-200'
-                : 'bg-[#131317] border-zinc-800 text-zinc-300'
+                : syncStatus === 'connected'
+                  ? 'bg-emerald-950/25 border-emerald-500/30 text-emerald-200'
+                  : 'bg-[#131317] border-zinc-800 text-zinc-300'
             }`}
           >
-            {isOffline ? (
+            {syncStatus === 'offline' ? (
               <WifiOff className="w-4 h-4 text-rose-400 shrink-0" />
-            ) : (
+            ) : syncStatus === 'connected' ? (
               <Wifi className="w-4 h-4 text-emerald-400 shrink-0" />
+            ) : (
+              <RefreshCw className="w-4 h-4 text-amber-300 shrink-0 animate-spin" />
             )}
-            <span className="font-mono tabular-nums whitespace-nowrap">
-              Terakhir diperbarui: {lastSyncedFormatted} WIB
+            <span className="whitespace-nowrap">
+              {syncStatus === 'connected' ? 'Realtime terhubung' : syncStatus === 'reconnecting' ? 'Menghubungkan ulang' : syncStatus === 'offline' ? 'Offline' : 'Menghubungkan...'}
+              {' · '}
+              <span className="font-mono tabular-nums">Update {lastSyncedFormatted} WIB</span>
             </span>
           </div>
 
