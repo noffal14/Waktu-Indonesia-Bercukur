@@ -46,6 +46,7 @@ import { CapsterProfile } from '@/lib/capster-profile';
 import {
   findServiceItemById,
   formatPromoShortBadge,
+  formatRupiah,
   formatRupiahRange,
   isPromoActiveNow,
   SERVICE_CATALOG,
@@ -59,6 +60,7 @@ import {
   QueueEstimationSummary,
   ServiceResult,
   SessionRole,
+  SelectedServiceInput,
 } from '@/lib/types';
 import { AboutCapster } from './AboutCapster';
 import { CapsterAvatar } from './BarbershopMedia';
@@ -210,6 +212,8 @@ export function CapsterPortalView({
     type: 'walkin' | 'booking';
     id: string;
     minutes: number;
+    selectedServices?: SelectedServiceInput[];
+    finalTotal?: number;
   } | null>(null);
 
   const [quotaInput, setQuotaInput] = useState<number>(
@@ -466,7 +470,14 @@ export function CapsterPortalView({
     const computedElapsed = waktuMulai
       ? Math.max(15, Math.round((nowMs - waktuMulai) / 60_000))
       : 45;
-    setCompletingItem({ type, id, minutes: computedElapsed });
+    const booking = type === 'booking' ? dbState.bookings.find((item) => item.id === id) : null;
+    setCompletingItem({
+      type,
+      id,
+      minutes: computedElapsed,
+      ...(type === 'walkin' ? { selectedServices: [{ itemId: 'premium-haircut', qty: 1 }] } : {}),
+      ...(type === 'booking' ? { finalTotal: booking?.totalEstimasiMin ?? booking?.subtotalHarga ?? 0 } : {}),
+    });
   };
 
   const handleActionResult = async (
@@ -959,6 +970,53 @@ export function CapsterPortalView({
                               className="w-20 min-h-[38px] px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-700 text-xs font-mono text-stone-100"
                             />
                           </div>
+                          {completingItem.type === 'walkin' && (
+                            <div className="space-y-2">
+                              <p className="text-xs font-medium text-stone-200">Pilih layanan yang dikerjakan:</p>
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                {SERVICE_CATALOG.map((category) => (
+                                  <div key={category.id} className="rounded-lg border border-zinc-800 p-2.5 space-y-1">
+                                    <p className="text-[11px] font-semibold text-amber-300">{category.nama}</p>
+                                    {category.items.map((item) => {
+                                      const current = completingItem.selectedServices || [];
+                                      const selected = current.find((entry) => entry.itemId === item.id);
+                                      return (
+                                        <label key={item.id} className="flex items-center justify-between gap-2 text-xs text-zinc-300">
+                                          <span className="flex min-w-0 items-center gap-2">
+                                            <input
+                                              type="checkbox"
+                                              checked={Boolean(selected)}
+                                              onChange={(event) => {
+                                                const next = event.target.checked
+                                                  ? [...current, { itemId: item.id, qty: 1 }]
+                                                  : current.filter((entry) => entry.itemId !== item.id);
+                                                setCompletingItem({ ...completingItem, selectedServices: next });
+                                              }}
+                                            />
+                                            <span>{item.nama}</span>
+                                          </span>
+                                          <span className="whitespace-nowrap text-zinc-500">{formatRupiah(item.harga)}</span>
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {completingItem.type === 'booking' && (
+                            <div className="space-y-1.5">
+                              <label className="block text-xs font-medium text-stone-200">Harga akhir setelah konfirmasi capster (Rp):</label>
+                              <input
+                                type="number"
+                                min={0}
+                                max={dbState.bookings.find((item) => item.id === b.id)?.subtotalHarga || 0}
+                                value={completingItem.finalTotal ?? 0}
+                                onChange={(event) => setCompletingItem({ ...completingItem, finalTotal: Math.max(0, Number(event.target.value) || 0) })}
+                                className="w-full max-w-xs min-h-[40px] rounded-lg border border-zinc-700 bg-zinc-950 px-3 text-sm font-mono text-stone-100"
+                              />
+                            </div>
+                          )}
                           <div className="flex gap-2">
                             <button
                               type="button"
@@ -966,7 +1024,8 @@ export function CapsterPortalView({
                                 handleActionResult(
                                   onCompleteWalkin(
                                     w.id,
-                                    completingItem.minutes
+                                    completingItem.minutes,
+                                    completingItem.selectedServices || []
                                   ),
                                   `Antrean ${w.nomorAntrean} selesai (${completingItem.minutes} menit).`
                                 );
@@ -1199,7 +1258,8 @@ export function CapsterPortalView({
                                 handleActionResult(
                                   onCompleteBooking(
                                     b.id,
-                                    completingItem.minutes
+                                    completingItem.minutes,
+                                    completingItem.finalTotal
                                   ),
                                   `Booking ${b.kodeTiket} selesai (${completingItem.minutes} menit).`
                                 );
