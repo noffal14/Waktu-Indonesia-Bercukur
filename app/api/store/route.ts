@@ -480,7 +480,7 @@ async function handleCapsterAction(action: StoreAction, body: any) {
     const nomorWhatsApp = normalizeWaToLocal08(requiredText(p.nomorWhatsApp));
     const instagramCapster = validateInstagramHandle(requiredText(p.instagramCapster), 'Instagram Capster');
     const instagramBarbershop = validateInstagramHandle(requiredText(p.instagramBarbershop), 'Instagram Barbershop');
-    if (pengalaman.length < 5 || !/^08\\d{8,12}$/.test(nomorWhatsApp) || !instagramCapster.valid || !instagramBarbershop.valid) return fail(400, 'Data profil capster tidak valid.', 'VALIDATION_ERROR');
+    if (pengalaman.length < 5 || !/^08\d{8,12}$/.test(nomorWhatsApp) || !instagramCapster.valid || !instagramBarbershop.valid) return fail(400, 'Data profil capster tidak valid.', 'VALIDATION_ERROR');
     await db.collection('capsterProfile').doc('hasan').set({
       ...getInitialCapsterProfile(), pengalaman, nomorWhatsApp,
       instagramCapster: instagramCapster.cleaned,
