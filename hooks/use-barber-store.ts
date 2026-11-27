@@ -199,8 +199,8 @@ export function useBarberStore() {
   useEffect(() => {
     if (!hydrated) return;
     if (!firebaseAuth) {
-      setAuthReady(true);
-      return;
+      const readyTimer = window.setTimeout(() => setAuthReady(true), 0);
+      return () => window.clearTimeout(readyTimer);
     }
     let active = true;
     const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
@@ -384,7 +384,6 @@ export function useBarberStore() {
         }
       }
     };
-    setSyncStatus('connecting');
     const capster = sessionRole === 'capster';
 
     const addCollectionListener = <T,>(
