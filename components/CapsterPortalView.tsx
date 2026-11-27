@@ -86,7 +86,7 @@ interface CapsterPortalViewProps {
   ) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onCompleteWalkin: (
     walkinId: string,
-    overrideDurationMinutes?: number
+    overrideDurationMinutes?: number,
     selectedServices?: SelectedServiceInput[]
   ) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onCancelWalkin: (walkinId: string) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
