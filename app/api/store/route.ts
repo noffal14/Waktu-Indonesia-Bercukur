@@ -162,7 +162,7 @@ async function handleQueueTake(uid: string, body: any) {
       tanggal: shop.todayStr, kunciHariOperasional: sessionKey, operationalDayKey: sessionKey,
       customerId: uid, customerUid: uid,
       namaPelanggan: customer.nama, nomorWhatsApp: customer.nomorWhatsApp,
-      waktuAmbil: now, status: 'Waiting', capsterId: requiredText(body.capsterId) || customer.capsterFavoritId || 'hasan',
+      waktuAmbil: now, status: 'Waiting', capsterId: 'hasan',
     };
     tx.set(sessionRef, {
       sessionKey, kuotaMaksimal: maximum, kuotaTerpakai: used + 1,
@@ -212,6 +212,7 @@ async function handleBookingCreate(uid: string, body: any) {
   const customer = customerSnap.data()!;
   const date = requiredText(body.tanggal);
   const capsterId = requiredText(body.capsterId) || 'hasan';
+  if (capsterId !== 'hasan') return fail(400, 'Capster yang dipilih tidak tersedia.', 'VALIDATION_ERROR');
   const startSlot = requiredText(body.jamSlot);
   const selected = Array.isArray(body.selectedServices) ? body.selectedServices : [];
   if (!date || !startSlot || selected.length === 0) return fail(400, 'Tanggal, slot, dan layanan wajib dipilih.', 'VALIDATION_ERROR');
@@ -313,6 +314,7 @@ async function handleBookingCustomerCancel(uid: string, id: string, reschedule?:
 
   const date = requiredText(reschedule.tanggal);
   const capsterId = requiredText(reschedule.capsterId);
+  if (capsterId !== 'hasan') return fail(400, 'Capster yang dipilih tidak tersedia.', 'VALIDATION_ERROR');
   const startSlot = requiredText(reschedule.jamSlot);
   if (parseWibEpochMs(date, startSlot) - Date.now() < RESCHEDULE_MIN_LEAD_MINUTES * 60_000) return fail(400, 'Perubahan jadwal minimal 60 menit sebelum slot dimulai.', 'RESCHEDULE_TOO_LATE');
   const hours = getOperationalHoursForDate(date);
