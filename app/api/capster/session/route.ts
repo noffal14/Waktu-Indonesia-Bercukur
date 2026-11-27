@@ -51,7 +51,7 @@ export async function DELETE(request: Request) {
     if (!sessionId) throw new CapsterAuthError(401, 'Sesi capster tidak ditemukan.');
     const db = getAdminDb();
     const ref = db.collection('capsterSessions').doc(CAPSTER_ID);
-    await adminDb.runTransaction(async (tx) => {
+    await db.runTransaction(async (tx) => {
       const snapshot = await tx.get(ref);
       if (snapshot.exists && snapshot.data()?.sessionId === sessionId) tx.delete(ref);
     });
