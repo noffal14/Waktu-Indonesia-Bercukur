@@ -124,25 +124,34 @@ export async function drainSheetSyncQueue(maxItems = 50) {
     };
 
     try {
+      let sheetRowRef: number | null = null;
       if (job.operation === 'appendTransaction') {
-        await appendTransactionOnce(values);
+        const result = await appendTransactionOnce(values);
+        sheetRowRef = Number(result.rowNumber || 0) || null;
       } else if (job.operation === 'updateTransaction') {
         if (!job.bookingCode) throw new Error('Kode Booking untuk retry tidak tersedia.');
         try {
-          await updateTransactionByCode(String(job.bookingCode), values);
+          const result = await updateTransactionByCode(String(job.bookingCode), values);
+          sheetRowRef = Number(result.rowNumber || 0) || null;
         } catch (error) {
           // Bila append awal gagal, buat satu baris final. Append helper tetap idempotent.
-          if (String(error).includes('tidak ditemukan')) await appendTransactionOnce(values);
-          else throw error;
+          if (String(error).includes('tidak ditemukan')) {
+            const result = await appendTransactionOnce(values);
+            sheetRowRef = Number(result.rowNumber || 0) || null;
+          } else {
+            throw error;
+          }
         }
       } else if (job.operation === 'upsertCustomer') {
-        await upsertCustomerByWhatsApp(values);
+        const result = await upsertCustomerByWhatsApp(values);
+        sheetRowRef = Number(result.rowNumber || 0) || null;
       } else {
         throw new Error('Jenis sinkronisasi spreadsheet tidak dikenal.');
       }
 
       await item.ref.update({
         status: 'synced',
+        sheetRowRef: sheetRowRef ?? FieldValue.delete(),
         syncedAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
         lastError: FieldValue.delete(),
@@ -150,6 +159,7 @@ export async function drainSheetSyncQueue(maxItems = 50) {
       if (job.sourcePath && job.sourceId) {
         await db.collection(String(job.sourcePath)).doc(String(job.sourceId)).set({
           sheetSyncStatus: 'synced',
+          ...(sheetRowRef ? { sheetRowRef } : {}),
           sheetSyncUpdatedAt: Date.now(),
           sheetSyncError: FieldValue.delete(),
         }, { merge: true });
