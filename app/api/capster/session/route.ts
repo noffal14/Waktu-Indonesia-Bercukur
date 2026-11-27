@@ -30,7 +30,7 @@ export async function POST(request: Request) {
         throw new CapsterAuthError(409, 'Akun capster sedang aktif di perangkat lain. Keluar dari perangkat tersebut terlebih dahulu.');
       }
 
-      const sessionId = active ? candidateId : candidateId;
+      const sessionId = candidateId;
       tx.set(ref, {
         sessionId, deviceInfo, loginAt: active ? current?.loginAt || FieldValue.serverTimestamp() : FieldValue.serverTimestamp(),
         lastSeen: FieldValue.serverTimestamp(),
