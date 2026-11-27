@@ -24,7 +24,7 @@ export const firebaseApp = isFirebaseClientConfigured()
   ? getApps().length ? getApp() : initializeApp(config)
   : null;
 
-export const firebaseAuth = firebaseApp ? getAuth(firebaseApp) : null;
+export const firebaseAuth = firebaseApp && typeof window !== 'undefined' ? getAuth(firebaseApp) : null;
 
 function createClientFirestore() {
   if (!firebaseApp) return null;
