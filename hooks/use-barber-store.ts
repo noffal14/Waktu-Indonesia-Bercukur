@@ -238,7 +238,7 @@ export function useBarberStore() {
             const expiryMessage = 'Sesi berakhir karena akun masuk di perangkat lain';
       window.sessionStorage.setItem('wib_capster_session_message', expiryMessage);
       setCapsterSessionMessage(expiryMessage);
-            await signOut(firebaseAuth).catch(() => undefined);
+            if (firebaseAuth) await signOut(firebaseAuth).catch(() => undefined);
             return;
           }
           setLoggedInCapsterId('hasan');
@@ -258,7 +258,7 @@ export function useBarberStore() {
           } else {
             setCustomerSessionId(null);
             setSessionRole(null);
-            await signOut(firebaseAuth).catch(() => undefined);
+            if (firebaseAuth) await signOut(firebaseAuth).catch(() => undefined);
           }
         }
       } catch {
@@ -527,7 +527,7 @@ export function useBarberStore() {
         });
         if (!result.ok || !result.data) {
           await credential.user.delete().catch(() => undefined);
-          await signOut(firebaseAuth).catch(() => undefined);
+          if (firebaseAuth) await signOut(firebaseAuth).catch(() => undefined);
           return {
             ok: false,
             errorCode: (result.errorCode || 'INVALID_STATE') as ServiceResult<Customer>['errorCode'],
@@ -575,7 +575,7 @@ export function useBarberStore() {
         );
         const result = await callCustomerAuthApi<Customer>('GET');
         if (!result.ok || !result.data) {
-          await signOut(firebaseAuth).catch(() => undefined);
+          if (firebaseAuth) await signOut(firebaseAuth).catch(() => undefined);
           return { ok: false, errorCode: 'UNAUTHORIZED', message: result.message || 'Profil pelanggan tidak ditemukan.' };
         }
         const customer = { ...result.data, id: credential.user.uid, passwordHash: '' };
@@ -649,7 +649,7 @@ export function useBarberStore() {
     if (!result.ok) {
       return { ok: false, errorCode: (result.errorCode || 'INVALID_STATE') as ServiceResult<unknown>['errorCode'], message: result.message };
     }
-    await signOut(firebaseAuth).catch(() => undefined);
+    if (firebaseAuth) await signOut(firebaseAuth).catch(() => undefined);
     setDbState((previous) => ({ ...previous, customers: [] }));
     setCustomerSessionId(null);
     setSessionRole(null);
@@ -781,7 +781,7 @@ export function useBarberStore() {
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || !payload.sessionId) {
-          await signOut(firebaseAuth);
+          if (firebaseAuth) await signOut(firebaseAuth);
           return {
             ok: false,
             errorCode: response.status === 409 ? 'UNAUTHORIZED' : 'INVALID_STATE',
@@ -799,7 +799,7 @@ export function useBarberStore() {
               'x-capster-session-id': payload.sessionId,
             },
           }).catch(() => undefined);
-          await signOut(firebaseAuth);
+          if (firebaseAuth) await signOut(firebaseAuth);
           return { ok: false, errorCode: 'NOT_FOUND', message: 'Data capster tidak ditemukan.' };
         }
 
