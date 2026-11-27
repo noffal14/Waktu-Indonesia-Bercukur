@@ -111,7 +111,7 @@ export function CapsterSpreadsheetView() {
             cache: 'no-store',
           });
           if (response.status === 401 || response.status === 403) {
-            await signOut(firebaseAuth);
+            if (firebaseAuth) await signOut(firebaseAuth);
             router.replace('/login?role=capster');
           }
         } catch {
