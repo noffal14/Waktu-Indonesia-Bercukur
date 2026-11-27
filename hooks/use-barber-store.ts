@@ -842,6 +842,7 @@ export function useBarberStore() {
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || !payload.sessionId) {
+          window.sessionStorage.removeItem('wib_capster_session_id');
           if (firebaseAuth) await signOut(firebaseAuth);
           return {
             ok: false,
