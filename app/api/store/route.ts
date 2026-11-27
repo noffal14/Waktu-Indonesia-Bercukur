@@ -120,7 +120,7 @@ async function userContext(request: Request) {
     await verifyCapsterRequest(request);
   } else {
     const email = String(decoded.email || '').toLowerCase();
-    const phoneFromEmail = email.match(/^(628\d{8,12})@pelanggan\.waktu-indonesia\\.app$/)?.[1];
+    const phoneFromEmail = email.match(/^(628\d{8,12})@pelanggan\.waktu-indonesia\.app$/)?.[1];
     if (!phoneFromEmail) throw new CapsterAuthError(403, 'Akun ini bukan akun pelanggan.');
     const profile = await getAdminDb().collection('customers').doc(decoded.uid).get();
     if (!profile.exists || profile.data()?.nomorWhatsApp !== phoneFromEmail) {
