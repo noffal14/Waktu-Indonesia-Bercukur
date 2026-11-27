@@ -83,6 +83,16 @@ function bookingSheetValues(booking: any, customer: any, status: string, finalTo
     'Sumber': 'Booking',
   };
 }
+function customerSheetValues(customer: any, visitCount?: number, lastVisit?: string) {
+  return {
+    'Nama': customer.nama,
+    'Nomor WhatsApp': customer.nomorWhatsApp,
+    'Email': customer.email || '',
+    'Tanggal Daftar': formatWibIsoDateTime(Number(customer.dibuatPada || Date.now())),
+    'Kunjungan Terakhir': lastVisit || '',
+    'Total Kunjungan': visitCount ?? Number(customer.totalKunjungan || 0),
+  };
+}
 async function setSheetStatus(ref: FirebaseFirestore.DocumentReference, status: 'synced' | 'failed' | 'pending', extra: Record<string, unknown> = {}) {
   await ref.set({ sheetSyncStatus: status, sheetSyncUpdatedAt: Date.now(), ...extra }, { merge: true });
 }
@@ -118,28 +128,29 @@ async function syncBookingFinal(id: string, booking: any, customer: any, status:
     await enqueueSheetSync(`booking-${id}-final`, 'updateTransaction', bookingSheetValues(booking, customer, status, finalTotal), { bookingCode: booking.kodeTiket, sourcePath: 'bookingPrivate', sourceId: id });
   }
 }
-async function syncCustomer(customer: any, visitCount?: number, lastVisit?: string) {
+async function syncCustomer(customer: any, visitCount?: number, lastVisit?: string, outboxJobId?: string) {
+  const values = customerSheetValues(customer, visitCount, lastVisit);
   try {
-    await upsertCustomerByWhatsApp({
-      'Nama': customer.nama,
-      'Nomor WhatsApp': customer.nomorWhatsApp,
-      'Email': customer.email || '',
-      'Tanggal Daftar': formatWibIsoDateTime(Number(customer.dibuatPada || Date.now())),
-      'Kunjungan Terakhir': lastVisit || '',
-      'Total Kunjungan': visitCount ?? 0,
-    });
+    await upsertCustomerByWhatsApp(values);
+    if (outboxJobId) {
+      await getAdminDb().collection('sheetSyncQueue').doc(outboxJobId).set({
+        status: 'synced',
+        syncedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+        lastError: FieldValue.delete(),
+      }, { merge: true });
+    }
   } catch (error) {
     console.error('[sheet-customer-sync]', error);
-    await enqueueSheetSync(`customer-${String(customer.nomorWhatsApp || 'unknown')}`, 'upsertCustomer', {
-      'Nama': customer.nama,
-      'Nomor WhatsApp': customer.nomorWhatsApp,
-      'Email': customer.email || '',
-      'Tanggal Daftar': formatWibIsoDateTime(Number(customer.dibuatPada || Date.now())),
-      'Kunjungan Terakhir': lastVisit || '',
-      'Total Kunjungan': visitCount ?? 0,
-    });
+    await enqueueSheetSync(
+      outboxJobId || `customer-${String(customer.nomorWhatsApp || 'unknown')}-${Date.now()}`,
+      'upsertCustomer',
+      values,
+      outboxJobId ? { sourcePath: 'customers', sourceId: String(customer.uid || '') } : {}
+    );
   }
 }
+
 async function userContext(request: Request) {
   const header = request.headers.get('authorization') || '';
   const token = header.match(/^Bearer\s+(.+)$/i)?.[1];
