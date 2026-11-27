@@ -83,6 +83,11 @@ export function CapsterDashboardShell() {
   return (
     <div className="min-h-screen bg-[#0B0B0D] text-[#F5F5F4]">
       <main className="max-w-6xl mx-auto px-4 md:px-6 py-6 md:py-8">
+        <div className="mb-5 flex justify-end">
+          <Link href="/capster/spreadsheet" className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 text-xs font-semibold text-amber-300 hover:bg-amber-400/20">
+            Keuangan & Pelanggan
+          </Link>
+        </div>
         <LazyCapsterPortalView
           dbState={store.dbState}
           capsterProfile={store.capsterProfile}
