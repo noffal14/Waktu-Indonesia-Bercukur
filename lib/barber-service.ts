@@ -87,7 +87,7 @@ export function hashPasswordDemo(password: string): string {
 // Konfigurasi sistem awal: satu akun capster untuk Hasan (di-seed otomatis meski localStorage kosong).
 // Password awal capster: "hasan123" (disimpan dalam bentuk hash, segera ganti lewat menu Profil Capster).
 // Catatan produksi: manajemen kredensial capster & sesi WAJIB memakai backend / Firebase Auth.
-const LEGACY_INITIAL_CAPSTER_HASH = hashPasswordDemo('wibhasan123');
+const LEGACY_INITIAL_CAPSTER_HASH = hashPasswordDemo('hasan123');
 const SYSTEM_CAPSTERS: Capster[] = [
   {
     id: 'hasan',
@@ -96,7 +96,7 @@ const SYSTEM_CAPSTERS: Capster[] = [
     spesialisasi: 'Classic Taper, Pompadour & Rapikan Jenggot',
     pengalaman: '2 tahun pengalaman menjadi capster di Waktu Indonesia Bercukur',
     username: 'hasan',
-    passwordHash: hashPasswordDemo('hasan123'),
+    passwordHash: hashPasswordDemo('LOCAL_CAPSTER_LOGIN_DISABLED_USE_FIREBASE_AUTH'),
     fotoKey: 'hasan',
   },
 ];
@@ -660,50 +660,25 @@ class BarberLocalStorageService {
   }
 
   public loginCapster(
-    username: string,
-    password: string
+    _username: string,
+    _password: string
   ): ServiceResult<Capster> {
+    return {
+      ok: false,
+      errorCode: 'UNAUTHORIZED',
+      message: 'Login capster harus menggunakan Firebase Authentication.',
+    };
+  }
+
+  public activateCapsterSession(capsterId: string): ServiceResult<Capster> {
     if (this.getSessionRole() === 'pelanggan') {
-      return {
-        ok: false,
-        errorCode: 'UNAUTHORIZED',
-        message: 'Akun ini bukan akun capster.',
-      };
+      return { ok: false, errorCode: 'UNAUTHORIZED', message: 'Akun ini bukan akun capster.' };
     }
-
-    const cleanUser = username.trim().toLowerCase();
-    if (!cleanUser || !password) {
-      return {
-        ok: false,
-        errorCode: 'VALIDATION_ERROR',
-        message: 'Username dan password wajib diisi.',
-      };
-    }
-
     const state = this.syncAndGetState();
-    const waCheck = validateIndonesianWhatsApp(username);
-    if (
-      waCheck.valid &&
-      state.customers.some((c) => c.nomorWhatsApp === waCheck.normalized)
-    ) {
-      return {
-        ok: false,
-        errorCode: 'UNAUTHORIZED',
-        message: 'Akun ini bukan akun capster.',
-      };
+    const found = state.capsters.find((capster) => capster.id === capsterId);
+    if (!found) {
+      return { ok: false, errorCode: 'NOT_FOUND', message: 'Data capster tidak ditemukan.' };
     }
-
-    const found = state.capsters.find(
-      (c) => c.username.trim().toLowerCase() === cleanUser
-    );
-    if (!found || found.passwordHash !== hashPasswordDemo(password)) {
-      return {
-        ok: false,
-        errorCode: 'VALIDATION_ERROR',
-        message: 'Username atau password salah.',
-      };
-    }
-
     if (typeof window !== 'undefined') {
       window.localStorage.removeItem(CUSTOMER_SESSION_ID_KEY);
       window.localStorage.setItem(SESSION_ROLE_KEY, 'capster');
