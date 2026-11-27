@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { firebaseAuth } from '@/lib/firebase-client';
 import {
   barberService,
   createInitialSystemState,
@@ -45,6 +47,7 @@ export function useBarberStore() {
   const [lastSyncedFormatted, setLastSyncedFormatted] = useState<string>(() =>
     formatTimeWibHHMM(Date.now())
   );
+  const [capsterSessionMessage, setCapsterSessionMessage] = useState<string | null>(null);
 
   const isOffline = !browserOnline;
   const isOfflineRef = useRef(isOffline);
@@ -124,6 +127,50 @@ export function useBarberStore() {
       window.clearInterval(syncInterval);
     };
   }, [syncStateFromStorage]);
+
+  useEffect(() => {
+    if (!hydrated || sessionRole !== 'capster') return;
+    let disposed = false;
+    let expiring = false;
+
+    const expireSession = async () => {
+      if (disposed || expiring) return;
+      expiring = true;
+      window.sessionStorage.removeItem('wib_capster_session_id');
+      if (firebaseAuth) await signOut(firebaseAuth).catch(() => undefined);
+      barberService.logoutCapster();
+      setLoggedInCapsterId(null);
+      setSessionRole(null);
+      setCapsterSessionMessage('Sesi berakhir karena akun masuk di perangkat lain');
+    };
+
+    const heartbeat = async () => {
+      const user = firebaseAuth?.currentUser;
+      const sessionId = window.sessionStorage.getItem('wib_capster_session_id');
+      if (!user || !sessionId) {
+        await expireSession();
+        return;
+      }
+      try {
+        const token = await user.getIdToken();
+        const response = await fetch('/api/capster/heartbeat', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'x-capster-session-id': sessionId },
+          cache: 'no-store',
+        });
+        if (response.status === 401) await expireSession();
+      } catch {
+        // Gangguan jaringan sementara tidak langsung menghapus sesi lokal.
+      }
+    };
+
+    void heartbeat();
+    const interval = window.setInterval(() => void heartbeat(), 30_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+    };
+  }, [hydrated, sessionRole]);
 
   const shopStatus = useMemo(() => getShopOperationalStatus(nowMs), [nowMs]);
   const todayStr = shopStatus.todayStr;
@@ -438,22 +485,91 @@ export function useBarberStore() {
   // =========================================================================
 
   const loginCapster = useCallback(
-    (username: string, password: string): ServiceResult<Capster> => {
-      const res = barberService.loginCapster(username, password);
-      if (res.ok && res.data) {
-        setSessionRole('capster');
-        setLoggedInCapsterId(res.data.id);
-        setCustomerSessionId(null);
+    async (username: string, password: string): Promise<ServiceResult<Capster>> => {
+      const cleanUsername = username.trim().toLowerCase();
+      if (cleanUsername !== 'hasan' || !password) {
+        return { ok: false, errorCode: 'UNAUTHORIZED', message: 'Username atau password salah.' };
       }
-      return res;
+      if (!firebaseAuth) {
+        return { ok: false, errorCode: 'INVALID_STATE', message: 'Firebase Authentication belum dikonfigurasi.' };
+      }
+
+      try {
+        const credential = await signInWithEmailAndPassword(
+          firebaseAuth,
+          'hasan@waktu-indonesia.app',
+          password
+        );
+        const token = await credential.user.getIdToken(true);
+        const storedSessionId = window.sessionStorage.getItem('wib_capster_session_id');
+        const response = await fetch('/api/capster/session', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            ...(storedSessionId ? { 'x-capster-session-id': storedSessionId } : {}),
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ deviceInfo: `${navigator.platform} | ${navigator.userAgent.slice(0, 100)}` }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.sessionId) {
+          await signOut(firebaseAuth);
+          return {
+            ok: false,
+            errorCode: response.status === 409 ? 'UNAUTHORIZED' : 'INVALID_STATE',
+            message: payload.message || 'Gagal membuat sesi capster.',
+          };
+        }
+
+        window.sessionStorage.setItem('wib_capster_session_id', payload.sessionId);
+        const localSession = barberService.activateCapsterSession('hasan');
+        if (!localSession.ok || !localSession.data) {
+          await fetch('/api/capster/session', {
+            method: 'DELETE',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'x-capster-session-id': payload.sessionId,
+            },
+          }).catch(() => undefined);
+          await signOut(firebaseAuth);
+          return localSession;
+        }
+
+        setCapsterSessionMessage(null);
+        setSessionRole('capster');
+        setLoggedInCapsterId(localSession.data.id);
+        setCustomerSessionId(null);
+        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
+        return localSession;
+      } catch (error) {
+        const code = (error as { code?: string }).code;
+        const message = code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found'
+          ? 'Username atau password salah.'
+          : 'Tidak dapat masuk. Periksa koneksi dan konfigurasi Firebase.';
+        return { ok: false, errorCode: 'UNAUTHORIZED', message };
+      }
     },
     []
   );
 
-  const logoutCapster = useCallback(() => {
-    barberService.logoutCapster();
-    setLoggedInCapsterId(null);
-    setSessionRole((prev) => (prev === 'capster' ? null : prev));
+  const logoutCapster = useCallback(async () => {
+    const sessionId = window.sessionStorage.getItem('wib_capster_session_id');
+    const user = firebaseAuth?.currentUser;
+    try {
+      if (user && sessionId) {
+        const token = await user.getIdToken();
+        await fetch('/api/capster/session', {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}`, 'x-capster-session-id': sessionId },
+        });
+      }
+    } finally {
+      window.sessionStorage.removeItem('wib_capster_session_id');
+      if (firebaseAuth) await signOut(firebaseAuth);
+      barberService.logoutCapster();
+      setLoggedInCapsterId(null);
+      setSessionRole((prev) => (prev === 'capster' ? null : prev));
+    }
   }, []);
 
   const callWalkin = useCallback(
@@ -717,6 +833,7 @@ export function useBarberStore() {
     activeCustomerBooking,
     isOffline,
     lastSyncedFormatted,
+    capsterSessionMessage,
     refreshFromStore: syncStateFromStorage,
     registerCustomer,
     loginCustomer,
