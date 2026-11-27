@@ -842,11 +842,12 @@ export function useBarberStore() {
   );
 
   const completeWalkin = useCallback(
-    async (walkinId: string, overrideDurationMinutes?: number, selectedServices?: SelectedServiceInput[]): Promise<ServiceResult<BarberDatabaseState>> => {
+    async (walkinId: string, overrideDurationMinutes?: number, selectedServices?: SelectedServiceInput[], finalTotal?: number): Promise<ServiceResult<BarberDatabaseState>> => {
       const result = await commitStoreAction('queue.complete', {
         id: walkinId,
         durationMinutes: overrideDurationMinutes,
         selectedServices: selectedServices || [],
+        finalTotal,
       });
       return result.ok ? { ok: true, data: dbState } : result;
     },
