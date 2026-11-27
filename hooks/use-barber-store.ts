@@ -286,12 +286,13 @@ export function useBarberStore() {
       bookingPrivate: Array<Record<string, unknown>>;
       schedules: Array<Record<string, unknown> & { _id: string }>;
       promos: Promo[];
+      promosLoaded: boolean;
       customer: Customer | null;
       profile: CapsterProfile | null;
       quota: Record<string, unknown> | null;
     } = {
       queuePublic: [], queuePrivate: [], bookingPublic: [], bookingPrivate: [],
-      schedules: [], promos: [], customer: null, profile: null, quota: null,
+      schedules: [], promos: [], promosLoaded: false, customer: null, profile: null, quota: null,
     };
 
     const apply = () => {
@@ -323,7 +324,7 @@ export function useBarberStore() {
         walkinQueue: queues,
         bookings,
         schedules,
-        promos: cache.promos.length ? cache.promos : previous.promos,
+        promos: cache.promosLoaded ? cache.promos : previous.promos,
         capsterProfile: cache.profile || previous.capsterProfile,
         quotas: { ...previous.quotas, ...quotaMap },
         lastUpdatedAt: Date.now(),
@@ -356,7 +357,7 @@ export function useBarberStore() {
     addCollectionListener<Record<string, unknown> & { _id: string }>('schedules', (rows) => {
       cache.schedules = rows.map((row) => ({ ...row, _id: String(row.id) }));
     });
-    addCollectionListener<Promo>('promos', (rows) => { cache.promos = rows; });
+    addCollectionListener<Promo>('promos', (rows) => { cache.promos = rows; cache.promosLoaded = true; });
 
     const privateQueue = collection(firestore, 'queuePrivate');
     const privateBooking = collection(firestore, 'bookingPrivate');
