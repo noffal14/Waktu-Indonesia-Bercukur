@@ -96,9 +96,14 @@ async function syncCustomer(customer: any, visitCount?: number, lastVisit?: stri
 }
 async function userContext(request: Request) {
   const header = request.headers.get('authorization') || '';
-  const token = header.match(/^Bearer\\s+(.+)$/i)?.[1];
+  const token = header.match(/^Bearer\s+(.+)$/i)?.[1];
   if (!token) throw new CapsterAuthError(401, 'Autentikasi diperlukan.');
-  const decoded = await getAdminAuth().verifyIdToken(token, true);
+  let decoded;
+  try {
+    decoded = await getAdminAuth().verifyIdToken(token, true);
+  } catch {
+    throw new CapsterAuthError(401, 'Sesi login tidak valid atau sudah berakhir.');
+  }
   const capster = decoded.role === 'capster';
   if (capster) await verifyCapsterRequest(request);
   return { uid: decoded.uid, capster, decoded };
@@ -143,7 +148,7 @@ async function handleQueueTake(uid: string, body: any) {
     const nextNumber = Number(session.lastNumber || 0) + 1;
     const ticket = {
       id, nomorAntrean: 'A' + String(nextNumber).padStart(3, '0'),
-      tanggal: shop.todayStr, kunciHariOperasional: sessionKey,
+      tanggal: shop.todayStr, kunciHariOperasional: sessionKey, operationalDayKey: sessionKey,
       customerId: uid, customerUid: uid,
       namaPelanggan: customer.nama, nomorWhatsApp: customer.nomorWhatsApp,
       waktuAmbil: now, status: 'Waiting', capsterId: requiredText(body.capsterId) || customer.capsterFavoritId || 'hasan',
@@ -155,7 +160,7 @@ async function handleQueueTake(uid: string, body: any) {
     tx.set(privateRef, ticket);
     tx.set(publicRef, {
       id, nomorAntrean: ticket.nomorAntrean, tanggal: ticket.tanggal,
-      kunciHariOperasional: sessionKey, namaPelanggan: maskedName(customer.nama),
+      kunciHariOperasional: sessionKey, operationalDayKey: sessionKey, namaPelanggan: maskedName(customer.nama),
       waktuAmbil: now, status: 'Waiting', capsterId: ticket.capsterId,
     });
     tx.set(activeRef, { queueId: id, status: 'Waiting', operationalDayKey: sessionKey });
@@ -313,7 +318,7 @@ async function handleBookingCustomerCancel(uid: string, id: string, reschedule?:
     const [scheduleSnap, ...lockSnaps] = await Promise.all([tx.get(newScheduleRef), ...newLockRefs.map((lock) => tx.get(lock))]);
     if (!current.exists || current.data()?.status !== 'Booked' || current.data()?.customerUid !== uid) throw new Error('INVALID_STATE');
     if (scheduleSnap.data()?.isLibur) throw new Error('CAPSTER_OFF');
-    if (lockSnaps.some((lock) => ['Booked', 'In-Service', 'Manual'].includes(String(lock.data()?.status || '')))) throw new Error('SLOT_TAKEN');
+    if (lockSnaps.some((lock) => ['Booked', 'In-Service', 'Manual'].includes(String(lock.data()?.status || '')) && lock.data()?.bookingId !== id)) throw new Error('SLOT_TAKEN');
     const booking = current.data()!;
     await releaseBookingLocks(tx, booking);
     const next = { ...booking, capsterId, tanggal: date, jamSlot: startSlot, slotTercakup: newSlots, waktuDiubah: Date.now() };
@@ -331,7 +336,17 @@ async function handleCapsterAction(action: StoreAction, body: any) {
     const key = requiredText(body.operationalDayKey);
     const max = Math.max(0, Math.min(200, Math.round(Number(body.maxQuota))));
     if (!key || !Number.isFinite(max)) return fail(400, 'Kuota tidak valid.', 'VALIDATION_ERROR');
-    await db.collection('queueSessions').doc(key).set({ sessionKey: key, kuotaMaksimal: max, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    const quotaRef = db.collection('queueSessions').doc(key);
+    await db.runTransaction(async (tx) => {
+      const quota = await tx.get(quotaRef);
+      tx.set(quotaRef, {
+        sessionKey: key,
+        kuotaMaksimal: max,
+        kuotaTerpakai: Number(quota.data()?.kuotaTerpakai || 0),
+        lastNumber: Number(quota.data()?.lastNumber || 0),
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+    });
     return Response.json({ ok: true });
   }
   if (action === 'schedule.dayOff' || action === 'schedule.slot') {
