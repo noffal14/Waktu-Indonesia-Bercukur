@@ -320,7 +320,7 @@ export function useBarberStore() {
       } : {};
       setDbState((previous) => ({
         ...previous,
-        customers: cache.customer ? [cache.customer] : (sessionRole === 'pelanggan' ? [] : previous.customers),
+        customers: cache.customer ? [cache.customer] : (sessionRole === 'capster' ? previous.customers : []),
         walkinQueue: queues,
         bookings,
         schedules,
