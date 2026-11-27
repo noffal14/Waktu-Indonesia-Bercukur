@@ -116,6 +116,14 @@ export function LoginPageShell() {
     router,
   ]);
 
+  useEffect(() => {
+    const savedMessage = window.sessionStorage.getItem('wib_capster_session_message');
+    if (savedMessage) {
+      setCapsterError(savedMessage);
+      window.sessionStorage.removeItem('wib_capster_session_message');
+    }
+  }, []);
+
   const handleCapsterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setCapsterError(null);
