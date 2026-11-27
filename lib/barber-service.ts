@@ -910,9 +910,9 @@ class BarberCompatibilityService {
 
   public getQueueEstimation(
     state: BarberDatabaseState,
-    operationalDayKey: string
+    operationalDayKey: string,
+    nowMs: number = Date.now()
   ): QueueEstimationSummary {
-    const nowMs = Date.now();
 
     const completedWalkins = state.walkinQueue.filter(
       (q) =>
