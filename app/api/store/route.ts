@@ -547,17 +547,32 @@ async function handleCapsterAction(action: StoreAction, body: any) {
         const reason = isDayOff
           ? requiredText(body.alasanLibur) || 'Capster menandai libur/izin pada tanggal ini'
           : requiredText(body.catatan) || 'Slot ditandai tidak tersedia oleh capster';
+        const canceledAt = Date.now();
+        const canceledBooking = {
+          ...booking,
+          status: 'Canceled',
+          alasanBatal: 'capster_tidak_tersedia',
+          catatanBatal: reason,
+          canceledAt,
+        };
         tx.update(snap.ref, {
           status: 'Canceled',
           alasanBatal: 'capster_tidak_tersedia',
           catatanBatal: reason,
-          canceledAt: Date.now(),
+          canceledAt,
           sheetSyncStatus: 'pending',
         });
         tx.set(db.collection('bookingPublic').doc(snap.id), {
           status: 'Canceled',
-          canceledAt: Date.now(),
+          canceledAt,
         }, { merge: true });
+        persistSheetSyncJobInTransaction(
+          tx,
+          `booking-${snap.id}-final`,
+          'updateTransaction',
+          bookingSheetValues(canceledBooking, { nama: booking.nama, nomorWhatsApp: booking.nomorWhatsApp }, 'Batal', 0),
+          { bookingCode: String(booking.kodeTiket), sourcePath: 'bookingPrivate', sourceId: snap.id }
+        );
       }
 
       lockSnaps.forEach((lockSnap) => {
@@ -851,8 +866,30 @@ async function handleCapsterAction(action: StoreAction, body: any) {
       const current = await tx.get(ref);
       const lockSnaps = await tx.getAll(...lockRefs);
       if (!current.exists || current.data()?.status !== 'Booked') throw new Error('INVALID_STATE');
-      tx.update(ref, { status: 'Canceled', alasanBatal: 'manual', catatanBatal: 'Dibatalkan oleh capster' });
-      tx.set(publicRef, { status: 'Canceled' }, { merge: true });
+      const currentBooking = current.data()!;
+      const canceledAt = Date.now();
+      const canceledBooking = {
+        ...currentBooking,
+        status: 'Canceled',
+        alasanBatal: 'manual',
+        catatanBatal: 'Dibatalkan oleh capster',
+        canceledAt,
+      };
+      tx.update(ref, {
+        status: 'Canceled',
+        alasanBatal: 'manual',
+        catatanBatal: 'Dibatalkan oleh capster',
+        canceledAt,
+        sheetSyncStatus: 'pending',
+      });
+      tx.set(publicRef, { status: 'Canceled', canceledAt }, { merge: true });
+      persistSheetSyncJobInTransaction(
+        tx,
+        `booking-${id}-final`,
+        'updateTransaction',
+        bookingSheetValues(canceledBooking, { nama: currentBooking.nama, nomorWhatsApp: currentBooking.nomorWhatsApp }, 'Batal', 0),
+        { bookingCode: String(currentBooking.kodeTiket), sourcePath: 'bookingPrivate', sourceId: id }
+      );
       lockSnaps.forEach((lock) => {
         if (lock.exists && (lock.data() as FirebaseFirestore.DocumentData | undefined)?.bookingId === id) tx.set(lock.ref, { status: 'Released', releasedAt: Date.now() }, { merge: true });
       });
