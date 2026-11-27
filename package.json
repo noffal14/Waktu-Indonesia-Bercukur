@@ -42,7 +42,8 @@
     "tsx": "^4.20.6"
   },
   "overrides": {
-    "postcss": "^8.5.34"
+    "postcss": "^8.5.34",
+    "@grpc/grpc-js": "^1.13.6"
   },
   "engines": {
     "node": "24.x"
