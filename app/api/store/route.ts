@@ -341,7 +341,7 @@ async function handleBookingCustomerCancel(uid: string, id: string, reschedule?:
     const [scheduleSnap, ...lockSnaps] = await Promise.all([tx.get(newScheduleRef), ...newLockRefs.map((lock) => tx.get(lock))]);
     if (!current.exists || current.data()?.status !== 'Booked' || current.data()?.customerUid !== uid) throw new Error('INVALID_STATE');
     if (scheduleSnap.data()?.isLibur) throw new Error('CAPSTER_OFF');
-    if (lockSnaps.some((lock) => ['Booked', 'In-Service', 'Manual'].includes(String(lock.data()?.status || '')) && lock.(data() as FirebaseFirestore.DocumentData | undefined)?.bookingId !== id)) throw new Error('SLOT_TAKEN');
+    if (lockSnaps.some((lock) => ['Booked', 'In-Service', 'Manual'].includes(String(lock.data()?.status || '')) && (lock.data() as FirebaseFirestore.DocumentData | undefined)?.bookingId !== id)) throw new Error('SLOT_TAKEN');
     const booking = current.data()!;
     await releaseBookingLocks(tx, booking);
     const nextBooking = { ...booking, capsterId, tanggal: date, jamSlot: startSlot, slotTercakup: newSlots, waktuDiubah: Date.now() };
@@ -629,7 +629,7 @@ async function handleCapsterAction(action: StoreAction, body: any) {
         });
         tx.set(publicRef, { status: 'Selesai', waktuSelesai: now }, { merge: true });
         lockSnaps.forEach((lock) => {
-          if (lock.exists && lock.(data() as FirebaseFirestore.DocumentData | undefined)?.bookingId === id) tx.set(lock.ref, { status: 'Released', releasedAt: now }, { merge: true });
+          if (lock.exists && (lock.data() as FirebaseFirestore.DocumentData | undefined)?.bookingId === id) tx.set(lock.ref, { status: 'Released', releasedAt: now }, { merge: true });
         });
         let customer = customerSnap?.data() || { nama: booking.nama, nomorWhatsApp: booking.nomorWhatsApp };
         let visits = 0;
@@ -653,7 +653,7 @@ async function handleCapsterAction(action: StoreAction, body: any) {
       tx.update(ref, { status: 'Canceled', alasanBatal: 'manual', catatanBatal: 'Dibatalkan oleh capster' });
       tx.set(publicRef, { status: 'Canceled' }, { merge: true });
       lockSnaps.forEach((lock) => {
-        if (lock.exists && lock.(data() as FirebaseFirestore.DocumentData | undefined)?.bookingId === id) tx.set(lock.ref, { status: 'Released', releasedAt: Date.now() }, { merge: true });
+        if (lock.exists && (lock.data() as FirebaseFirestore.DocumentData | undefined)?.bookingId === id) tx.set(lock.ref, { status: 'Released', releasedAt: Date.now() }, { merge: true });
       });
     });
     const customerSnap = booking.customerUid ? await db.collection('customers').doc(booking.customerUid).get() : null;
