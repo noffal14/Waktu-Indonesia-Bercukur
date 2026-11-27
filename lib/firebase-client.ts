@@ -1,6 +1,11 @@
 import { getApp, getApps, initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import {
+  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+} from 'firebase/firestore';
 
 const config = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -20,4 +25,21 @@ export const firebaseApp = isFirebaseClientConfigured()
   : null;
 
 export const firebaseAuth = firebaseApp ? getAuth(firebaseApp) : null;
-export const firestore = firebaseApp ? getFirestore(firebaseApp) : null;
+
+function createClientFirestore() {
+  if (!firebaseApp) return null;
+  if (typeof window === 'undefined') return getFirestore(firebaseApp);
+
+  try {
+    return initializeFirestore(firebaseApp, {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager(),
+      }),
+    });
+  } catch {
+    // Firestore may already be initialized by HMR or IndexedDB may be unsupported.
+    return getFirestore(firebaseApp);
+  }
+}
+
+export const firestore = createClientFirestore();
