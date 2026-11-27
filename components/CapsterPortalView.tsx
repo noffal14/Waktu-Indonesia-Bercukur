@@ -149,7 +149,7 @@ interface CapsterPortalViewProps {
     currentPassword: string;
     newPassword: string;
     confirmPassword: string;
-  }) => ServiceResult<BarberDatabaseState>;
+  }) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
 }
 
 type DashboardTab = 'berlangsung' | 'riwayat' | 'jadwal' | 'promo' | 'profil';
@@ -2335,7 +2335,7 @@ export function CapsterPortalView({
               )}
 
               <form
-                onSubmit={(e) => {
+                onSubmit={async (e) => {
                   e.preventDefault();
                   setCapsterPwdError(null);
                   setCapsterPwdSuccess(null);
@@ -2355,7 +2355,7 @@ export function CapsterPortalView({
                     return;
                   }
 
-                  const res = onChangeCapsterPassword({
+                  const res = await onChangeCapsterPassword({
                     currentPassword: capsterCurrPwd,
                     newPassword: capsterNewPwd,
                     confirmPassword: capsterConfirmPwd,
