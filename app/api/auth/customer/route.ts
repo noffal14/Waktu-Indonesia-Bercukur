@@ -151,7 +151,7 @@ export async function PATCH(request: Request) {
         ...(body.capsterFavoritId !== undefined ? { capsterFavoritId: body.capsterFavoritId === 'hasan' ? 'hasan' : null } : {}),
         diperbaruiPada: Date.now(),
       };
-      const next = { ...snapshot.data(), ...patch };
+      const next = { ...(snapshot.data() || {}), ...patch } as FirebaseFirestore.DocumentData;
       tx.update(ref, patch);
       const jobId = `customer-${String(next.nomorWhatsApp || decoded.uid)}-${Date.now()}`;
       persistCustomerSheetJob(tx, jobId, next, decoded.uid);
