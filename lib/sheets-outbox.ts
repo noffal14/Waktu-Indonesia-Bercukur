@@ -171,7 +171,7 @@ export async function drainSheetSyncQueue(maxItems = 50) {
           sheetSyncUpdatedAt: Date.now(),
         }, { merge: true });
       }
-      await releaseCustomerLock();
+      await releaseSyncLock();
       failed += 1;
     }
   }
