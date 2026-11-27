@@ -166,7 +166,7 @@ async function handleQueueTake(uid: string, body: any) {
     };
     tx.set(sessionRef, {
       sessionKey, kuotaMaksimal: maximum, kuotaTerpakai: used + 1,
-      lastNumber: nextNumber, updatedAt: FieldValue.serverTimestamp(),
+      lastNumber: nextNumber, resetApplied: true, updatedAt: FieldValue.serverTimestamp(),
     }, { merge: true });
     tx.set(privateRef, ticket);
     tx.set(publicRef, {
