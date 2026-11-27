@@ -832,10 +832,11 @@ export function useBarberStore() {
   );
 
   const completeWalkin = useCallback(
-    async (walkinId: string, overrideDurationMinutes?: number): Promise<ServiceResult<BarberDatabaseState>> => {
+    async (walkinId: string, overrideDurationMinutes?: number, selectedServices?: SelectedServiceInput[]): Promise<ServiceResult<BarberDatabaseState>> => {
       const result = await commitStoreAction('queue.complete', {
         id: walkinId,
         durationMinutes: overrideDurationMinutes,
+        selectedServices: selectedServices || [],
       });
       return result.ok ? { ok: true, data: dbState } : result;
     },
@@ -859,12 +860,12 @@ export function useBarberStore() {
   );
 
   const completeBooking = useCallback(
-    async (bookingId: string, overrideDurationMinutes?: number): Promise<ServiceResult<BarberDatabaseState>> => {
+    async (bookingId: string, overrideDurationMinutes?: number, finalTotal?: number): Promise<ServiceResult<BarberDatabaseState>> => {
       const booking = dbState.bookings.find((item) => item.id === bookingId);
       const result = await commitStoreAction('booking.complete', {
         id: bookingId,
         durationMinutes: overrideDurationMinutes,
-        finalTotal: booking?.totalEstimasiMin ?? booking?.subtotalHarga ?? 0,
+        finalTotal: finalTotal ?? booking?.totalEstimasiMin ?? booking?.subtotalHarga ?? 0,
       });
       return result.ok ? { ok: true, data: dbState } : result;
     },
