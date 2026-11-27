@@ -701,6 +701,13 @@ async function handleCapsterAction(action: StoreAction, body: any) {
           visits = Number(customerSnap.data()?.totalKunjungan || 0) + 1;
           tx.update(customerRef, { totalKunjungan: visits, kunjunganTerakhir: q.tanggal });
           customer = { ...customerSnap.data(), totalKunjungan: visits };
+          persistSheetSyncJobInTransaction(
+            tx,
+            `walkin-${id}-customer`,
+            'upsertCustomer',
+            customerSheetValues(customer, visits, q.tanggal),
+            { sourcePath: 'customers', sourceId: String(q.customerUid) }
+          );
         }
         persistSheetSyncJobInTransaction(
           tx,
@@ -726,7 +733,7 @@ async function handleCapsterAction(action: StoreAction, body: any) {
         await enqueueSheetSync(`walkin-${id}-append`, 'appendTransaction', sheetValues, { sourcePath: 'queuePrivate', sourceId: id });
       }
       if (completed.customer) {
-        await syncCustomer(completed.customer, completed.visits, q.tanggal);
+        await syncCustomer(completed.customer, completed.visits, q.tanggal, `walkin-${id}-customer`);
       }
     } else {
       if (q.status !== 'Waiting') return fail(409, 'Hanya antrean Waiting yang dapat dibatalkan.', 'INVALID_STATE');
@@ -790,11 +797,25 @@ async function handleCapsterAction(action: StoreAction, body: any) {
           visits = Number(customerSnap.data()?.totalKunjungan || 0) + 1;
           tx.update(customerRef, { totalKunjungan: visits, kunjunganTerakhir: booking.tanggal });
           customer = { ...customer, totalKunjungan: visits };
+          persistSheetSyncJobInTransaction(
+            tx,
+            `booking-${id}-customer`,
+            'upsertCustomer',
+            customerSheetValues(customer, visits, booking.tanggal),
+            { sourcePath: 'customers', sourceId: String(booking.customerUid) }
+          );
         }
+        persistSheetSyncJobInTransaction(
+          tx,
+          `booking-${id}-final`,
+          'updateTransaction',
+          bookingSheetValues(updated, customer, 'Selesai', finalTotal),
+          { bookingCode: String(booking.kodeTiket), sourcePath: 'bookingPrivate', sourceId: id }
+        );
         return { updated, customer, visits };
       });
       await syncBookingFinal(id, completed.updated, completed.customer, 'Selesai', finalTotal);
-      if (completed.visits) await syncCustomer(completed.customer, completed.visits, booking.tanggal);
+      if (completed.visits) await syncCustomer(completed.customer, completed.visits, booking.tanggal, `booking-${id}-customer`);
       return Response.json({ ok: true });
     }
     const slots = booking.slotTercakup || [booking.jamSlot];
