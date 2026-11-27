@@ -1,5 +1,5 @@
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
-import { adminDb } from '@/lib/firebase-admin';
+import { getAdminDb } from '@/lib/firebase-admin';
 import {
   CAPSTER_ID, CAPSTER_SESSION_TTL_MS, CapsterAuthError,
   capsterErrorResponse, verifyCapsterIdentity,
@@ -12,9 +12,10 @@ export async function POST(request: Request) {
     await verifyCapsterIdentity(request);
     const sessionId = request.headers.get('x-capster-session-id');
     if (!sessionId) throw new CapsterAuthError(401, 'Sesi capster tidak ditemukan.');
-    const ref = adminDb.collection('capsterSessions').doc(CAPSTER_ID);
+    const db = getAdminDb();
+    const ref = db.collection('capsterSessions').doc(CAPSTER_ID);
 
-    await adminDb.runTransaction(async (tx) => {
+    await db.runTransaction(async (tx) => {
       const snapshot = await tx.get(ref);
       const session = snapshot.data();
       const lastSeen = session?.lastSeen;
