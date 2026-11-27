@@ -1,6 +1,8 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { validateIndonesianWhatsApp } from '@/lib/barber-service';
+import { upsertCustomerByWhatsApp } from '@/lib/google-sheets';
+import { enqueueSheetSync } from '@/lib/sheets-outbox';
 
 export const dynamic = 'force-dynamic';
 
@@ -52,6 +54,19 @@ export async function POST(request: Request) {
     });
 
     const profile = (await customerRef.get()).data();
+    const sheetValues = {
+      'Nama': nama,
+      'Nomor WhatsApp': phoneCheck.normalized,
+      'Email': String(body.email || '').trim().toLowerCase(),
+      'Tanggal Daftar': new Date(profile?.dibuatPada || Date.now()).toISOString(),
+      'Kunjungan Terakhir': '',
+      'Total Kunjungan': 0,
+    };
+    try {
+      await upsertCustomerByWhatsApp(sheetValues);
+    } catch {
+      await enqueueSheetSync(`customer-${phoneCheck.normalized}`, 'upsertCustomer', sheetValues);
+    }
     return Response.json({ ok: true, customer: { ...profile, id: decoded.uid, passwordHash: '' } }, { status: 201 });
   } catch (error) {
     const code = error instanceof Error ? error.message : '';
