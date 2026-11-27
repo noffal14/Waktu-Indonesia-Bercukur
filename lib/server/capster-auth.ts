@@ -2,7 +2,7 @@ import 'server-only';
 
 import { DecodedIdToken } from 'firebase-admin/auth';
 import { Timestamp } from 'firebase-admin/firestore';
-import { adminAuth, adminDb } from '@/lib/firebase-admin';
+import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 
 export const CAPSTER_ID = 'hasan';
 export const CAPSTER_SESSION_TTL_MS = 90_000;
@@ -21,7 +21,7 @@ export async function verifyCapsterIdentity(request: Request): Promise<DecodedId
 
   let decoded: DecodedIdToken;
   try {
-    decoded = await adminAuth.verifyIdToken(token, true);
+    decoded = await getAdminAuth().verifyIdToken(token, true);
   } catch {
     throw new CapsterAuthError(401, 'Sesi login tidak valid atau sudah berakhir.');
   }
@@ -36,7 +36,7 @@ export async function verifyCapsterRequest(request: Request): Promise<DecodedIdT
   const sessionId = request.headers.get('x-capster-session-id');
   if (!sessionId) throw new CapsterAuthError(401, 'Sesi capster tidak ditemukan.');
 
-  const snapshot = await adminDb.collection('capsterSessions').doc(CAPSTER_ID).get();
+  const snapshot = await getAdminDb().collection('capsterSessions').doc(CAPSTER_ID).get();
   const session = snapshot.data();
   const lastSeen = session?.lastSeen;
   const lastSeenMs = lastSeen instanceof Timestamp ? lastSeen.toMillis() : Number(lastSeen || 0);
