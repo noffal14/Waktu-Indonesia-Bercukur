@@ -163,6 +163,7 @@ export function BarberAppShell() {
                   dbState={store.dbState}
                   capsterProfile={store.capsterProfile}
                   todayStr={store.todayStr}
+                  nowMs={store.nowMs}
                   liveClockText={store.liveClockText}
                   shopStatus={store.shopStatus}
                   todayQuota={store.todayQuota}
@@ -213,6 +214,7 @@ export function BarberAppShell() {
                     <ScheduleView
                       dbState={store.dbState}
                       todayStr={store.todayStr}
+                      nowMs={store.nowMs}
                       initialCapsterId={scheduleCapsterId}
                       onSelectSlotToBook={handleSelectSlotToBook}
                     />
@@ -224,6 +226,7 @@ export function BarberAppShell() {
                       dbState={store.dbState}
                       capsterProfile={store.capsterProfile}
                       todayStr={store.todayStr}
+                      nowMs={store.nowMs}
                       currentCustomer={store.currentCustomer}
                       activePromos={store.activePromos}
                       preselectedBooking={preselectedBooking}
