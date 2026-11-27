@@ -475,7 +475,7 @@ export function CapsterPortalView({
       ? Math.max(15, Math.round((nowMs - waktuMulai) / 60_000))
       : 45;
     const booking = type === 'booking' ? dbState.bookings.find((item) => item.id === id) : null;
-    const walkinServices = type === 'walkin' ? [{ itemId: 'premium-haircut', qty: 1 }] : [];
+    const walkinServices = type === 'walkin' ? [] : [];
     const walkinPricing = calculateServicesPricing(
       walkinServices,
       dbState.promos.filter((promo) => isPromoActiveNow(promo, nowMs))
@@ -1052,6 +1052,7 @@ export function CapsterPortalView({
                           <div className="flex gap-2">
                             <button
                               type="button"
+                              disabled={completingItem.type === 'walkin' && !(completingItem.selectedServices || []).length}
                               onClick={() => {
                                 handleActionResult(
                                   onCompleteWalkin(
@@ -1064,7 +1065,7 @@ export function CapsterPortalView({
                                 );
                                 setCompletingItem(null);
                               }}
-                              className="min-h-[42px] px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-xs font-semibold"
+                              className="min-h-[42px] px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-950 text-xs font-semibold"
                             >
                               Simpan &amp; Selesaikan
                             </button>
