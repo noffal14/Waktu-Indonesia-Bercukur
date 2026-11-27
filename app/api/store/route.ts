@@ -462,33 +462,77 @@ async function handleCapsterAction(action: StoreAction, body: any) {
     const q = snap.data()!;
     const now = Date.now();
     if (action === 'queue.call') {
-      if (q.status !== 'Waiting') return fail(409, 'Antrean tidak berstatus Waiting.', 'INVALID_STATE');
-      await ref.update({ status: 'In-Service', capsterId: 'hasan', waktuMulai: now });
-      await publicRef.set({ status: 'In-Service', waktuMulai: now }, { merge: true });
+      await db.runTransaction(async (tx) => {
+        const current = await tx.get(ref);
+        if (!current.exists || current.data()?.status !== 'Waiting') throw new Error('INVALID_STATE');
+        tx.update(ref, { status: 'In-Service', capsterId: 'hasan', waktuMulai: now });
+        tx.set(publicRef, { status: 'In-Service', waktuMulai: now }, { merge: true });
+      });
     } else if (action === 'queue.complete') {
       if (q.status !== 'In-Service') return fail(409, 'Antrean harus berstatus In-Service.', 'INVALID_STATE');
+      const selected = Array.isArray(body.selectedServices) ? body.selectedServices : [];
+      if (!selected.length) return fail(400, 'Pilih minimal satu layanan untuk walk-in.', 'VALIDATION_ERROR');
+      const promoSnap = await db.collection('promos').get();
+      const promos = promoSnap.empty ? getInitialSystemPromos() : promoSnap.docs.map((item) => item.data() as any);
+      const activePromos = promos.filter((promo: any) => isPromoActiveNow(promo, now));
+      const pricing = calculateServicesPricing(selected, activePromos);
+      if (!pricing.lines.length) return fail(400, 'Layanan walk-in tidak valid.', 'VALIDATION_ERROR');
       const elapsed = q.waktuMulai ? Math.max(1, Math.round((now - q.waktuMulai) / 60000)) : 45;
-      await ref.update({ status: 'Selesai', waktuSelesai: now, durasiAktual: Number(body.durationMinutes) > 0 ? Math.round(Number(body.durationMinutes)) : elapsed });
-      await publicRef.set({ status: 'Selesai', waktuSelesai: now }, { merge: true });
-      const code = 'WI-' + String(q.kunciHariOperasional || q.tanggal).replace(/-/g, '') + '-' + q.nomorAntrean;
-      try {
-        await appendTransactionOnce({
-          'Tanggal': q.tanggal, 'Jam': new Date(q.waktuAmbil).toISOString().slice(11, 16),
-          'Kode Booking': code, 'Nama Pelanggan': q.namaPelanggan || 'Pelanggan',
-          'Nomor WhatsApp': q.nomorWhatsApp || '', 'Capster': 'Hasan',
-          'Layanan (daftar)': '', 'Kategori': '', 'Harga Normal': 0,
-          'Potongan Promo': 0, 'Total Harga': 0, 'Status': 'Selesai', 'Sumber': 'Walk-in',
+      const actualDuration = Number(body.durationMinutes) > 0 ? Math.round(Number(body.durationMinutes)) : elapsed;
+      const finalTotal = pricing.totalEstimasiMin;
+      const customerRef = q.customerUid ? db.collection('customers').doc(q.customerUid) : null;
+      const completed = await db.runTransaction(async (tx) => {
+        const current = await tx.get(ref);
+        if (!current.exists || current.data()?.status !== 'In-Service') throw new Error('INVALID_STATE');
+        const customerSnap = customerRef ? await tx.get(customerRef) : null;
+        const completedQueue = {
+          ...current.data(),
+          status: 'Selesai', waktuSelesai: now, durasiAktual: actualDuration,
+          layananDipilih: pricing.lines, subtotalHarga: pricing.subtotalHarga,
+          potonganFinal: Math.max(0, pricing.subtotalHarga - finalTotal),
+          hargaFinal: finalTotal, sheetSyncStatus: 'pending',
+        };
+        tx.update(ref, {
+          status: 'Selesai', waktuSelesai: now, durasiAktual: actualDuration,
+          layananDipilih: pricing.lines, subtotalHarga: pricing.subtotalHarga,
+          potonganFinal: Math.max(0, pricing.subtotalHarga - finalTotal),
+          hargaFinal: finalTotal, sheetSyncStatus: 'pending',
         });
-        await ref.set({ sheetSyncStatus: 'synced', sheetRowRef: code }, { merge: true });
+        tx.set(publicRef, { status: 'Selesai', waktuSelesai: now }, { merge: true });
+        let customer = customerSnap?.data() || null;
+        let visits = 0;
+        if (customerSnap?.exists && customerRef) {
+          visits = Number(customerSnap.data()?.totalKunjungan || 0) + 1;
+          tx.update(customerRef, { totalKunjungan: visits, kunjunganTerakhir: q.tanggal });
+          customer = { ...customerSnap.data(), totalKunjungan: visits };
+        }
+        return { completedQueue, customer, visits };
+      });
+
+      const code = 'WI-' + String(q.kunciHariOperasional || q.tanggal).replace(/-/g, '') + '-' + q.nomorAntrean;
+      const sheetValues = {
+        'Tanggal': q.tanggal,
+        'Jam': new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(q.waktuAmbil),
+        'Kode Booking': code,
+        'Nama Pelanggan': q.namaPelanggan || 'Pelanggan',
+        'Nomor WhatsApp': q.nomorWhatsApp || '',
+        'Capster': 'Hasan',
+        'Layanan (daftar)': pricing.lines.map((line) => line.nama + (line.qty > 1 ? ' x' + line.qty : '')).join(', '),
+        'Kategori': categoriesFor(pricing.lines),
+        'Harga Normal': pricing.subtotalHarga,
+        'Potongan Promo': Math.max(0, pricing.subtotalHarga - finalTotal),
+        'Total Harga': finalTotal,
+        'Status': 'Selesai',
+        'Sumber': 'Walk-in',
+      };
+      try {
+        const synced = await appendTransactionOnce(sheetValues);
+        await ref.set({ sheetSyncStatus: 'synced', sheetRowRef: synced.rowNumber || null, sheetSyncError: FieldValue.delete() }, { merge: true });
       } catch (error) {
         await ref.set({ sheetSyncStatus: 'failed', sheetSyncError: String(error).slice(0, 500) }, { merge: true });
       }
-      const customerSnap = q.customerUid ? await db.collection('customers').doc(q.customerUid).get() : null;
-      if (customerSnap?.exists) {
-        const customer = customerSnap.data()!;
-        const visits = Number(customer.totalKunjungan || 0) + 1;
-        await customerSnap.ref.set({ totalKunjungan: visits, kunjunganTerakhir: q.tanggal }, { merge: true });
-        await syncCustomer({ ...customer, totalKunjungan: visits }, visits, q.tanggal);
+      if (completed.customer) {
+        await syncCustomer(completed.customer, completed.visits, q.tanggal);
       }
     } else {
       if (q.status !== 'Waiting') return fail(409, 'Hanya antrean Waiting yang dapat dibatalkan.', 'INVALID_STATE');
@@ -513,20 +557,46 @@ async function handleCapsterAction(action: StoreAction, body: any) {
       const elapsed = booking.waktuMulai ? Math.max(1, Math.round((now - booking.waktuMulai) / 60000)) : 45;
       const finalTotal = typeof body.finalTotal === 'number' ? Math.round(body.finalTotal) : Number(booking.totalEstimasiMin || booking.subtotalHarga || 0);
       if (finalTotal < 0 || finalTotal > Number(booking.subtotalHarga || 0)) return fail(400, 'Harga akhir tidak valid.', 'VALIDATION_ERROR');
-      await ref.update({ status: 'Selesai', waktuSelesai: now, durasiAktual: Number(body.durationMinutes) > 0 ? Math.round(Number(body.durationMinutes)) : elapsed, hargaFinal: finalTotal, potonganFinal: Math.max(0, Number(booking.subtotalHarga || 0) - finalTotal) });
-      await publicRef.set({ status: 'Selesai', waktuSelesai: now }, { merge: true });
-      for (const slot of booking.slotTercakup || [booking.jamSlot]) {
-        const lock = db.collection('bookingSlots').doc(slotLockId(booking.capsterId, booking.tanggal, slot));
-        await lock.set({ status: 'Released', releasedAt: now }, { merge: true });
-      }
-      const customerSnap = booking.customerUid ? await db.collection('customers').doc(booking.customerUid).get() : null;
-      const customer = customerSnap?.data() || { nama: booking.nama, nomorWhatsApp: booking.nomorWhatsApp };
-      await syncBookingFinal(id, { ...booking, status: 'Selesai' }, customer, 'Selesai', finalTotal);
-      if (customerSnap?.exists) {
-        const visits = Number(customer.totalKunjungan || 0) + 1;
-        await customerSnap.ref.set({ totalKunjungan: visits, kunjunganTerakhir: booking.tanggal }, { merge: true });
-        await syncCustomer({ ...customer, totalKunjungan: visits }, visits, booking.tanggal);
-      }
+      const slots = booking.slotTercakup || [booking.jamSlot];
+      const lockRefs = slots.map((slot: string) => db.collection('bookingSlots').doc(slotLockId(booking.capsterId, booking.tanggal, slot)));
+      const customerRef = booking.customerUid ? db.collection('customers').doc(booking.customerUid) : null;
+      const completed = await db.runTransaction(async (tx) => {
+        const current = await tx.get(ref);
+        const [lockSnaps, customerSnap] = await Promise.all([
+          tx.getAll(...lockRefs),
+          customerRef ? tx.get(customerRef) : Promise.resolve(null),
+        ]);
+        if (!current.exists || current.data()?.status !== 'In-Service') throw new Error('INVALID_STATE');
+        const currentBooking = current.data()!;
+        const updated = {
+          ...currentBooking,
+          status: 'Selesai',
+          waktuSelesai: now,
+          durasiAktual: Number(body.durationMinutes) > 0 ? Math.round(Number(body.durationMinutes)) : elapsed,
+          hargaFinal: finalTotal,
+          potonganFinal: Math.max(0, Number(currentBooking.subtotalHarga || 0) - finalTotal),
+        };
+        tx.update(ref, {
+          status: 'Selesai', waktuSelesai: now,
+          durasiAktual: updated.durasiAktual,
+          hargaFinal: finalTotal,
+          potonganFinal: updated.potonganFinal,
+        });
+        tx.set(publicRef, { status: 'Selesai', waktuSelesai: now }, { merge: true });
+        lockSnaps.forEach((lock) => {
+          if (lock.exists && lock.data()?.bookingId === id) tx.set(lock.ref, { status: 'Released', releasedAt: now }, { merge: true });
+        });
+        let customer = customerSnap?.data() || { nama: booking.nama, nomorWhatsApp: booking.nomorWhatsApp };
+        let visits = 0;
+        if (customerSnap?.exists && customerRef) {
+          visits = Number(customerSnap.data()?.totalKunjungan || 0) + 1;
+          tx.update(customerRef, { totalKunjungan: visits, kunjunganTerakhir: booking.tanggal });
+          customer = { ...customer, totalKunjungan: visits };
+        }
+        return { updated, customer, visits };
+      });
+      await syncBookingFinal(id, completed.updated, completed.customer, 'Selesai', finalTotal);
+      if (completed.visits) await syncCustomer(completed.customer, completed.visits, booking.tanggal);
       return Response.json({ ok: true });
     }
     if (booking.status !== 'Booked') return fail(409, 'Hanya booking Booked yang dapat dibatalkan.', 'INVALID_STATE');
