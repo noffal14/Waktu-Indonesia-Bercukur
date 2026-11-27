@@ -6,6 +6,9 @@ service cloud.firestore {
       return signedIn() && request.auth.token.role == 'capster';
     }
     function owns(uid) { return signedIn() && request.auth.uid == uid; }
+    function ownsCustomerRecord() {
+      return signedIn() && resource.data.customerUid == request.auth.uid;
+    }
 
     match /config/{document} {
       allow read: if true;
@@ -40,11 +43,11 @@ service cloud.firestore {
       allow delete: if owns(uid);
     }
     match /queuePrivate/{document} {
-      allow read: if isCapster();
+      allow read: if isCapster() || ownsCustomerRecord();
       allow write: if false;
     }
     match /bookingPrivate/{document} {
-      allow read: if isCapster();
+      allow read: if isCapster() || ownsCustomerRecord();
       allow write: if false;
     }
     match /capsterSessions/{document} {
