@@ -10,13 +10,14 @@ service cloud.firestore {
       return signedIn() && resource.data.customerUid == request.auth.uid;
     }
 
+    // Data konfigurasi yang boleh tampil di halaman pelanggan.
     match /config/{document} {
       allow read: if true;
-      allow write: if isCapster();
+      allow write: if false;
     }
     match /queueSessions/{session} {
       allow read: if true;
-      allow write: if isCapster();
+      allow write: if false;
     }
     match /queuePublic/{document} {
       allow read: if true;
@@ -28,19 +29,21 @@ service cloud.firestore {
     }
     match /schedules/{document} {
       allow read: if true;
-      allow write: if isCapster();
+      allow write: if false;
     }
     match /promos/{document} {
       allow read: if true;
-      allow write: if isCapster();
+      allow write: if false;
     }
     match /capsterProfile/{document} {
       allow read: if true;
-      allow write: if isCapster();
+      allow write: if false;
     }
+
+    // Profil pribadi hanya dapat dibaca oleh pemilik. Semua mutasi melewati API Admin.
     match /customers/{uid} {
-      allow read, create, update: if owns(uid);
-      allow delete: if owns(uid);
+      allow read: if owns(uid);
+      allow write: if false;
     }
     match /queuePrivate/{document} {
       allow read: if isCapster() || ownsCustomerRecord();
@@ -50,8 +53,12 @@ service cloud.firestore {
       allow read: if isCapster() || ownsCustomerRecord();
       allow write: if false;
     }
-    match /capsterSessions/{document} {
-      allow read, write: if false;
-    }
+
+    // Koleksi internal. Hanya server Firebase Admin yang boleh mengaksesnya.
+    match /waAccounts/{document} { allow read, write: if false; }
+    match /activeQueues/{document} { allow read, write: if false; }
+    match /bookingCounters/{document} { allow read, write: if false; }
+    match /bookingSlots/{document} { allow read, write: if false; }
+    match /capsterSessions/{document} { allow read, write: if false; }
   }
 }
