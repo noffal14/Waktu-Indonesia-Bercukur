@@ -848,7 +848,8 @@ class BarberCompatibilityService {
     state: BarberDatabaseState,
     capsterId: string,
     tanggal: string,
-    excludeBookingId?: string
+    excludeBookingId?: string,
+    nowMs: number = Date.now()
   ): {
     config: DataJadwalSlotCapster;
     slots: ComputedSlotInfo[];
@@ -858,8 +859,6 @@ class BarberCompatibilityService {
       return { config, slots: [] };
     }
     const hours = generateHourSlots(config.jamKerja.buka, config.jamKerja.tutup);
-    const nowMs = Date.now();
-
     const slots: ComputedSlotInfo[] = hours.map((jam) => {
       const slotEpoch = parseWibEpochMs(tanggal, jam);
       const activeBooking = state.bookings.find(
