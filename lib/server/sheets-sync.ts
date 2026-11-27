@@ -2,6 +2,8 @@ import 'server-only';
 
 import { updateTransactionByCode } from '@/lib/google-sheets';
 import { enqueueSheetSync } from '@/lib/sheets-outbox';
+import { getAdminDb } from '@/lib/firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 
 function bookingValues(booking: any) {
   const lines = Array.isArray(booking.layananDipilih) ? booking.layananDipilih : [];
@@ -32,9 +34,12 @@ function bookingValues(booking: any) {
 
 export async function syncBookingExpired(id: string, booking: any) {
   const values = bookingValues(booking);
+  const ref = getAdminDb().collection('bookingPrivate').doc(id);
   try {
     await updateTransactionByCode(String(booking.kodeTiket), values);
-  } catch {
+    await ref.set({ sheetSyncStatus: 'synced', sheetSyncUpdatedAt: Date.now(), sheetSyncError: FieldValue.delete() }, { merge: true });
+  } catch (error) {
+    await ref.set({ sheetSyncStatus: 'failed', sheetSyncError: String(error).slice(0, 500), sheetSyncUpdatedAt: Date.now() }, { merge: true });
     await enqueueSheetSync(`booking-${id}-expired`, 'updateTransaction', values, {
       bookingCode: String(booking.kodeTiket),
       sourcePath: 'bookingPrivate',
