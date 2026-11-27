@@ -19,7 +19,7 @@ export async function GET(request: Request) {
     const current = await tx.get(sessionRef);
     if (current.exists && current.data()?.resetApplied === true) return;
     tx.set(sessionRef, {
-      sessionKey, quotaMaximum: 15, quotaUsed: 0,
+      sessionKey, kuotaMaksimal: 15, kuotaTerpakai: 0, lastNumber: 0,
       resetApplied: true, resetAt: FieldValue.serverTimestamp(),
     }, { merge: true });
   });
@@ -31,9 +31,14 @@ export async function GET(request: Request) {
 
   if (!stale.empty) {
     const batch = db.batch();
-    stale.docs.forEach((doc) => batch.update(doc.ref, {
-      status: 'Kedaluwarsa', expiredAt: Timestamp.now(), expirationReason: 'daily-reset',
-    }));
+    stale.docs.forEach((doc) => {
+      batch.update(doc.ref, { status: 'Kedaluwarsa', expiredAt: Timestamp.now(), expirationReason: 'daily-reset' });
+      batch.set(db.collection('queuePublic').doc(doc.id), { status: 'Kedaluwarsa' }, { merge: true });
+      const item = doc.data();
+      if (item.customerUid && item.operationalDayKey) {
+        batch.delete(db.collection('activeQueues').doc(item.operationalDayKey + '_' + item.customerUid));
+      }
+    });
     await batch.commit();
   }
 
