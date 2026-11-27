@@ -640,6 +640,22 @@ async function handleCapsterAction(action: StoreAction, body: any) {
       if (finalTotal < 0 || finalTotal > pricing.subtotalHarga) {
         return fail(400, 'Harga akhir walk-in tidak valid.', 'VALIDATION_ERROR');
       }
+      const code = 'WI-' + String(q.kunciHariOperasional || q.tanggal).replace(/-/g, '') + '-' + q.nomorAntrean;
+      const sheetValues = {
+        'Tanggal': q.tanggal,
+        'Jam': new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(q.waktuAmbil),
+        'Kode Booking': code,
+        'Nama Pelanggan': q.namaPelanggan || 'Pelanggan',
+        'Nomor WhatsApp': q.nomorWhatsApp || '',
+        'Capster': 'Hasan',
+        'Layanan (daftar)': pricing.lines.map((line) => line.nama + (line.qty > 1 ? ' x' + line.qty : '')).join(', '),
+        'Kategori': categoriesFor(pricing.lines),
+        'Harga Normal': pricing.subtotalHarga,
+        'Potongan Promo': Math.max(0, pricing.subtotalHarga - finalTotal),
+        'Total Harga': finalTotal,
+        'Status': 'Selesai',
+        'Sumber': 'Walk-in',
+      };
       const customerRef = q.customerUid ? db.collection('customers').doc(q.customerUid) : null;
       const activeQueueRef = q.customerUid && q.operationalDayKey
         ? db.collection('activeQueues').doc(String(q.operationalDayKey) + '_' + String(q.customerUid))
@@ -675,28 +691,25 @@ async function handleCapsterAction(action: StoreAction, body: any) {
           tx.update(customerRef, { totalKunjungan: visits, kunjunganTerakhir: q.tanggal });
           customer = { ...customerSnap.data(), totalKunjungan: visits };
         }
+        persistSheetSyncJobInTransaction(
+          tx,
+          `walkin-${id}-append`,
+          'appendTransaction',
+          sheetValues,
+          { sourcePath: 'queuePrivate', sourceId: id }
+        );
         return { completedQueue, customer, visits };
       });
 
-      const code = 'WI-' + String(q.kunciHariOperasional || q.tanggal).replace(/-/g, '') + '-' + q.nomorAntrean;
-      const sheetValues = {
-        'Tanggal': q.tanggal,
-        'Jam': new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(q.waktuAmbil),
-        'Kode Booking': code,
-        'Nama Pelanggan': q.namaPelanggan || 'Pelanggan',
-        'Nomor WhatsApp': q.nomorWhatsApp || '',
-        'Capster': 'Hasan',
-        'Layanan (daftar)': pricing.lines.map((line) => line.nama + (line.qty > 1 ? ' x' + line.qty : '')).join(', '),
-        'Kategori': categoriesFor(pricing.lines),
-        'Harga Normal': pricing.subtotalHarga,
-        'Potongan Promo': Math.max(0, pricing.subtotalHarga - finalTotal),
-        'Total Harga': finalTotal,
-        'Status': 'Selesai',
-        'Sumber': 'Walk-in',
-      };
       try {
         const synced = await appendTransactionOnce(sheetValues);
         await ref.set({ sheetSyncStatus: 'synced', sheetRowRef: synced.rowNumber || null, sheetSyncError: FieldValue.delete() }, { merge: true });
+        await db.collection('sheetSyncQueue').doc(`walkin-${id}-append`).set({
+          status: 'synced',
+          syncedAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+          lastError: FieldValue.delete(),
+        }, { merge: true });
       } catch (error) {
         await ref.set({ sheetSyncStatus: 'failed', sheetSyncError: String(error).slice(0, 500) }, { merge: true });
         await enqueueSheetSync(`walkin-${id}-append`, 'appendTransaction', sheetValues, { sourcePath: 'queuePrivate', sourceId: id });
