@@ -390,6 +390,14 @@ async function handleCapsterAction(action: StoreAction, body: any) {
       }
       batch.set(scheduleRef, { ...currentSchedule, isLibur, alasanLibur: isLibur ? requiredText(body.alasanLibur) || 'Libur / Izin Capster' : null }, { merge: true });
       await batch.commit();
+      if (conflicts.length) {
+        for (const snap of bookingsQuery.docs) {
+          const customerSnap = snap.data().customerUid
+            ? await db.collection('customers').doc(String(snap.data().customerUid)).get()
+            : null;
+          await syncBookingFinal(snap.id, snap.data(), customerSnap?.data() || snap.data(), 'Batal');
+        }
+      }
       return Response.json({ ok: true });
     }
 
@@ -410,6 +418,13 @@ async function handleCapsterAction(action: StoreAction, body: any) {
     }
     batch.set(scheduleRef, { ...currentSchedule, manualSlots }, { merge: true });
     await batch.commit();
+    if (conflict && body.forceCancelConflict) {
+      const canceled = conflict.data();
+      const customerSnap = canceled.customerUid
+        ? await db.collection('customers').doc(String(canceled.customerUid)).get()
+        : null;
+      await syncBookingFinal(conflict.id, canceled, customerSnap?.data() || canceled, 'Batal');
+    }
     return Response.json({ ok: true });
   }
 
@@ -558,9 +573,13 @@ async function handleCapsterAction(action: StoreAction, body: any) {
     if (!snap.exists) return fail(404, 'Booking tidak ditemukan.', 'NOT_FOUND');
     const booking = snap.data()!;
     if (action === 'booking.start') {
-      if (booking.status !== 'Booked') return fail(409, 'Booking harus berstatus Booked.', 'INVALID_STATE');
-      await ref.update({ status: 'In-Service', waktuMulai: Date.now() });
-      await publicRef.set({ status: 'In-Service', waktuMulai: Date.now() }, { merge: true });
+      const now = Date.now();
+      await db.runTransaction(async (tx) => {
+        const current = await tx.get(ref);
+        if (!current.exists || current.data()?.status !== 'Booked') throw new Error('INVALID_STATE');
+        tx.update(ref, { status: 'In-Service', waktuMulai: now });
+        tx.set(publicRef, { status: 'In-Service', waktuMulai: now }, { merge: true });
+      });
       return Response.json({ ok: true });
     }
     if (action === 'booking.complete') {
@@ -611,12 +630,18 @@ async function handleCapsterAction(action: StoreAction, body: any) {
       if (completed.visits) await syncCustomer(completed.customer, completed.visits, booking.tanggal);
       return Response.json({ ok: true });
     }
-    if (booking.status !== 'Booked') return fail(409, 'Hanya booking Booked yang dapat dibatalkan.', 'INVALID_STATE');
-    await ref.update({ status: 'Canceled', alasanBatal: 'manual', catatanBatal: 'Dibatalkan oleh capster' });
-    await publicRef.set({ status: 'Canceled' }, { merge: true });
-    for (const slot of booking.slotTercakup || [booking.jamSlot]) {
-      await db.collection('bookingSlots').doc(slotLockId(booking.capsterId, booking.tanggal, slot)).set({ status: 'Released' }, { merge: true });
-    }
+    const slots = booking.slotTercakup || [booking.jamSlot];
+    const lockRefs = slots.map((slot: string) => db.collection('bookingSlots').doc(slotLockId(booking.capsterId, booking.tanggal, slot)));
+    await db.runTransaction(async (tx) => {
+      const current = await tx.get(ref);
+      const lockSnaps = await tx.getAll(...lockRefs);
+      if (!current.exists || current.data()?.status !== 'Booked') throw new Error('INVALID_STATE');
+      tx.update(ref, { status: 'Canceled', alasanBatal: 'manual', catatanBatal: 'Dibatalkan oleh capster' });
+      tx.set(publicRef, { status: 'Canceled' }, { merge: true });
+      lockSnaps.forEach((lock) => {
+        if (lock.exists && lock.data()?.bookingId === id) tx.set(lock.ref, { status: 'Released', releasedAt: Date.now() }, { merge: true });
+      });
+    });
     const customerSnap = booking.customerUid ? await db.collection('customers').doc(booking.customerUid).get() : null;
     await syncBookingFinal(id, booking, customerSnap?.data() || booking, 'Batal');
     return Response.json({ ok: true });
