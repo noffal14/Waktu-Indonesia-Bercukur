@@ -1,4 +1,31 @@
 import {
+  addDaysWib,
+  DEFAULT_DURATION_MINUTES,
+  formatDateIndoWib,
+  formatShortDateIndoWib,
+  generateHourSlots,
+  getOperationalHoursForDate,
+  getOperationalSessionKey,
+  getShopOperationalStatus,
+  getWibParts,
+  LATE_TOLERANCE_MINUTES,
+  parseWibEpochMs,
+  RESCHEDULE_MIN_LEAD_MINUTES,
+  WALKIN_DAILY_QUOTA,
+} from './barbershop-config';
+import {
+  calculateServicesPricing,
+  findServiceItemById,
+  getInitialSystemPromos,
+  isPromoActiveNow,
+} from './services-catalog';
+import {
+  CapsterProfile,
+  getInitialCapsterProfile,
+  normalizeWaToLocal08,
+  validateInstagramHandle,
+} from './capster-profile';
+import {
   BarberDatabaseState,
   Capster,
   ComputedSlotInfo,
@@ -7,60 +34,39 @@ import {
   DataBooking,
   DataJadwalSlotCapster,
   DataKuotaAntrean,
+  InServiceDetail,
+  ManualSlotEntry,
+  Promo,
   QueueEstimationSummary,
+  SelectedServiceInput,
   ServiceResult,
+  SessionRole,
   SlotStatus,
 } from './types';
 
-const STORAGE_KEY = 'wib_barbershop_state_v2';
-const CUSTOMER_SESSION_ID_KEY = 'wib_customer_session_id';
-const CUSTOMER_WALKIN_ID_KEY = 'wib_customer_walkin_id';
-const CUSTOMER_BOOKING_CODE_KEY = 'wib_customer_booking_code';
-const CAPSTER_SESSION_KEY = 'wib_capster_session_id';
-const DEFAULT_DURATION_MINUTES = 45;
-const LATE_TOLERANCE_MINUTES = 15;
-const RESCHEDULE_MIN_LEAD_MINUTES = 60;
-const DB_VERSION = 2;
-
-export const INITIAL_CAPSTERS: Capster[] = [
-  {
-    id: 'hasan',
-    nama: 'Hasan',
-    gelar: 'Capster Senior',
-    spesialisasi: 'Classic Taper, Pompadour & Rapikan Jenggot',
-    pengalaman: '8 tahun pengalaman',
-    username: 'hasan',
-    pin: '1234',
-    fotoKey: 'hasan',
-  },
-  {
-    id: 'raka',
-    nama: 'Raka',
-    gelar: 'Capster',
-    spesialisasi: 'Textured Crop, Burst Fade & French Crop',
-    pengalaman: '4 tahun pengalaman',
-    username: 'raka',
-    pin: '1234',
-    fotoKey: 'raka',
-  },
-  {
-    id: 'dimas',
-    nama: 'Dimas',
-    gelar: 'Capster',
-    spesialisasi: 'Clean Undercut, Buzz Cut & Hair Styling',
-    pengalaman: '5 tahun pengalaman',
-    username: 'dimas',
-    pin: '1234',
-    fotoKey: 'dimas',
-  },
+export const STORAGE_VERSION = 6;
+const STORAGE_KEY = 'wib_barbershop_state_v6';
+const V5_STORAGE_KEY = 'wib_barbershop_state_v5';
+const V4_STORAGE_KEY = 'wib_barbershop_state_v4';
+const LEGACY_STORAGE_KEYS = [
+  'wib_barbershop_state_v1',
+  'wib_barbershop_state_v2',
+  'wib_barbershop_state_v3',
+  'wib_customer_walkin_id',
+  'wib_customer_booking_code',
 ];
 
+const SESSION_ROLE_KEY = 'wib_session_role';
+const CUSTOMER_SESSION_ID_KEY = 'wib_customer_session_id';
+const CAPSTER_SESSION_ID_KEY = 'wib_capster_session_id';
+
 /**
- * CATATAN KEAMANAN:
- * Ini adalah autentikasi demo sisi klien (localStorage) tanpa backend.
- * Hash sederhana digunakan agar password tidak disimpan sebagai teks polos.
- * Untuk lingkungan produksi, WAJIB gunakan backend server atau Firebase Auth
- * dengan hashing kriptografis server-side (bcrypt/argon2) dan manajemen sesi aman.
+ * CATATAN KEAMANAN PRODUKSI:
+ * Aplikasi ini menggunakan penyimpanan browser (localStorage) tanpa backend.
+ * Password (termasuk akun sistem capster dan akun pelanggan) disimpan dalam bentuk
+ * hash sederhana, bukan teks polos. Untuk lingkungan produksi, WAJIB gunakan
+ * backend server atau Firebase Auth dengan hashing kriptografis server-side
+ * (bcrypt/argon2) dan manajemen sesi terverifikasi server.
  */
 export function hashPasswordDemo(password: string): string {
   const salted = `wib_barber_salt_2026::${password}`;
@@ -70,7 +76,7 @@ export function hashPasswordDemo(password: string): string {
     const ch = salted.charCodeAt(i);
     h1 ^= ch;
     h1 = Math.imul(h1, 0x01000193);
-    h2 ^= ch + ((i + 1) * 31);
+    h2 ^= ch + (i + 1) * 31;
     h2 = Math.imul(h2, 0x85ebca6b);
   }
   const part1 = (h1 >>> 0).toString(16).padStart(8, '0');
@@ -78,93 +84,57 @@ export function hashPasswordDemo(password: string): string {
   return `wib_h1_${part1}${part2}`;
 }
 
-export function formatDateYYYYMMDD(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
+// Konfigurasi sistem awal: satu akun capster untuk Hasan (di-seed otomatis meski localStorage kosong).
+// Password awal capster: "hasan123" (disimpan dalam bentuk hash, segera ganti lewat menu Profil Capster).
+// Catatan produksi: manajemen kredensial capster & sesi WAJIB memakai backend / Firebase Auth.
+const LEGACY_INITIAL_CAPSTER_HASH = hashPasswordDemo('wibhasan123');
+const SYSTEM_CAPSTERS: Capster[] = [
+  {
+    id: 'hasan',
+    nama: 'Hasan',
+    gelar: 'Capster Senior',
+    spesialisasi: 'Classic Taper, Pompadour & Rapikan Jenggot',
+    pengalaman: '2 tahun pengalaman menjadi capster di Waktu Indonesia Bercukur',
+    username: 'hasan',
+    passwordHash: hashPasswordDemo('hasan123'),
+    fotoKey: 'hasan',
+  },
+];
 
-export function addDaysYYYYMMDD(baseDateStr: string, days: number): string {
-  const [y, m, d] = baseDateStr.split('-').map(Number);
-  const dt = new Date(y, m - 1, d);
-  dt.setDate(dt.getDate() + days);
-  return formatDateYYYYMMDD(dt);
-}
+function mergeSystemCapsters(
+  persistedCapsters: Capster[] | undefined,
+  profile: CapsterProfile
+): Capster[] {
+  const list = Array.isArray(persistedCapsters) ? persistedCapsters : [];
+  return SYSTEM_CAPSTERS.map((sysCapster) => {
+    const existing = list.find(
+      (item) =>
+        item.id === sysCapster.id ||
+        item.username.trim().toLowerCase() ===
+          sysCapster.username.trim().toLowerCase()
+    );
+    const resolvedHash =
+      existing?.passwordHash &&
+      existing.passwordHash !== LEGACY_INITIAL_CAPSTER_HASH
+        ? existing.passwordHash
+        : sysCapster.passwordHash;
 
-export function formatTimeHHMM(epochMs: number): string {
-  const dt = new Date(epochMs);
-  const h = String(dt.getHours()).padStart(2, '0');
-  const m = String(dt.getMinutes()).padStart(2, '0');
-  return `${h}:${m}`;
-}
+    const base: Capster = {
+      ...sysCapster,
+      username: sysCapster.username.trim().toLowerCase(),
+      passwordHash: resolvedHash,
+    };
 
-export function formatDateIndo(dateStr: string): string {
-  const [y, m, d] = dateStr.split('-').map(Number);
-  const dt = new Date(y, m - 1, d);
-  const hari = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
-  const bulan = [
-    'Januari',
-    'Februari',
-    'Maret',
-    'April',
-    'Mei',
-    'Juni',
-    'Juli',
-    'Agustus',
-    'September',
-    'Oktober',
-    'November',
-    'Desember',
-  ];
-  return `${hari[dt.getDay()]}, ${d} ${bulan[dt.getMonth()]} ${y}`;
-}
-
-export function formatShortDateIndo(dateStr: string): string {
-  const [y, m, d] = dateStr.split('-').map(Number);
-  const dt = new Date(y, m - 1, d);
-  const hari = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
-  const bulan = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'Mei',
-    'Jun',
-    'Jul',
-    'Agu',
-    'Sep',
-    'Okt',
-    'Nov',
-    'Des',
-  ];
-  return `${hari[dt.getDay()]}, ${d} ${bulan[dt.getMonth()]}`;
-}
-
-export function getEffectiveNowMs(state: BarberDatabaseState): number {
-  if (state.useRealClock) {
-    return Date.now() + state.extraOffsetMinutes * 60_000;
-  }
-  const elapsedRealMs = Math.max(0, Date.now() - state.realAnchorMs);
-  return (
-    state.simAnchorMs + elapsedRealMs + state.extraOffsetMinutes * 60_000
-  );
-}
-
-export function parseSlotEpochMs(tanggal: string, jamSlot: string): number {
-  const [y, m, d] = tanggal.split('-').map(Number);
-  const [hh, mm] = jamSlot.split(':').map(Number);
-  return new Date(y, m - 1, d, hh, mm, 0, 0).getTime();
-}
-
-export function generateHourSlots(buka: string, tutup: string): string[] {
-  const startHour = Number(buka.split(':')[0]);
-  const endHour = Number(tutup.split(':')[0]);
-  const slots: string[] = [];
-  for (let h = startHour; h < endHour; h++) {
-    slots.push(`${String(h).padStart(2, '0')}:00`);
-  }
-  return slots;
+    if (base.id === profile.capsterId) {
+      return {
+        ...base,
+        nama: profile.nama || base.nama,
+        gelar: profile.gelar || base.gelar,
+        pengalaman: profile.pengalaman || base.pengalaman,
+      };
+    }
+    return base;
+  });
 }
 
 export function normalizeWhatsAppTo628(phone: string): string {
@@ -232,281 +202,186 @@ export function validateEmailOptional(email?: string): {
   return { valid: true, cleaned: trimmed.toLowerCase() };
 }
 
-export function createSeedData(): BarberDatabaseState {
-  const realNow = new Date();
-  const todayStr = formatDateYYYYMMDD(realNow);
-  const tomorrowStr = addDaysYYYYMMDD(todayStr, 1);
-  const dayAfterStr = addDaysYYYYMMDD(todayStr, 2);
+export function maskCustomerName(name?: string): string {
+  const clean = name?.trim();
+  if (!clean) return 'Tamu';
+  if (clean.length <= 2) return `${clean.charAt(0)}***`;
+  return `${clean.slice(0, 2)}***`;
+}
 
-  // Anchor waktu demo ke hari ini pukul 13:05 WIB agar slot 10:00-21:00 realistis kapan pun diuji
-  const [y, m, d] = todayStr.split('-').map(Number);
-  const simAnchor = new Date(y, m - 1, d, 13, 5, 0, 0).getTime();
-  const realAnchor = Date.now();
-  const min = 60_000;
-  const compactDate = todayStr.replace(/-/g, '');
-  const compactTomorrow = tomorrowStr.replace(/-/g, '');
+export function formatTimeWibHHMM(epochMs: number): string {
+  return getWibParts(epochMs).hhmm;
+}
 
-  const demoPasswordHash = hashPasswordDemo('demo123');
+export function formatDateIndo(dateStr: string): string {
+  return formatDateIndoWib(dateStr);
+}
 
-  const customers: Customer[] = [
-    {
-      id: 'cust-1',
-      nama: 'Andi Pratama',
-      nomorWhatsApp: '6281234567890',
-      email: 'andi.pratama@contoh.id',
-      passwordHash: demoPasswordHash,
-      capsterFavoritId: 'hasan',
-      dibuatPada: simAnchor - 10 * 24 * 60 * min,
-    },
-    {
-      id: 'cust-2',
-      nama: 'Bima Nugraha',
-      nomorWhatsApp: '6281298765432',
-      email: 'bima.nugraha@contoh.id',
-      passwordHash: demoPasswordHash,
-      capsterFavoritId: 'raka',
-      dibuatPada: simAnchor - 5 * 24 * 60 * min,
-    },
-  ];
+export function formatShortDateIndo(dateStr: string): string {
+  return formatShortDateIndoWib(dateStr);
+}
 
-  const walkinQueue: DataAntreanWalkin[] = [
-    {
-      id: 'wk-1',
-      nomorAntrean: 'A001',
-      tanggal: todayStr,
-      namaPelanggan: 'Budi Santoso',
-      waktuAmbil: simAnchor - 150 * min, // 10:35
-      status: 'Selesai',
-      capsterId: 'hasan',
-      waktuMulai: simAnchor - 140 * min, // 10:45
-      waktuSelesai: simAnchor - 100 * min, // 11:25
-      durasiAktual: 40,
-    },
-    {
-      id: 'wk-2',
-      nomorAntrean: 'A002',
-      tanggal: todayStr,
-      namaPelanggan: 'Fajar Pratama',
-      waktuAmbil: simAnchor - 55 * min, // 12:10
-      status: 'In-Service',
-      capsterId: 'hasan',
-      waktuMulai: simAnchor - 25 * min, // 12:40
-    },
-    {
-      id: 'wk-3',
-      nomorAntrean: 'A003',
-      tanggal: todayStr,
-      customerId: 'cust-1', // Terhubung ke pelanggan1 (081234567890)
-      namaPelanggan: 'Andi Pratama',
-      nomorWhatsApp: '6281234567890',
-      waktuAmbil: simAnchor - 20 * min, // 12:45
-      status: 'Waiting',
-      capsterId: 'hasan',
-    },
-    {
-      id: 'wk-4',
-      nomorAntrean: 'A004',
-      tanggal: todayStr,
-      namaPelanggan: 'Reza Mahendra',
-      waktuAmbil: simAnchor - 8 * min, // 12:57
-      status: 'Waiting',
-    },
-  ];
+export function addDaysYYYYMMDD(baseDateStr: string, days: number): string {
+  return addDaysWib(baseDateStr, days);
+}
 
-  const bookings: DataBooking[] = [
-    {
-      id: 'bk-1',
-      kodeTiket: `BK-${compactDate}-001`,
-      nama: 'Rizky Ramadhan',
-      nomorWhatsApp: '6281234567801',
-      capsterId: 'hasan',
-      tanggal: todayStr,
-      jamSlot: '11:00',
-      status: 'Selesai',
-      alasanBatal: null,
-      waktuDibuat: simAnchor - 240 * min,
-      waktuMulai: parseSlotEpochMs(todayStr, '11:00'),
-      waktuSelesai: parseSlotEpochMs(todayStr, '11:00') + 50 * min,
-      durasiAktual: 50,
-    },
-    {
-      id: 'bk-2',
-      kodeTiket: `BK-${compactDate}-002`,
-      nama: 'Bagas Saputra',
-      nomorWhatsApp: '6281398765432',
-      capsterId: 'raka',
-      tanggal: todayStr,
-      jamSlot: '13:00',
-      status: 'In-Service',
-      alasanBatal: null,
-      waktuDibuat: simAnchor - 180 * min,
-      waktuMulai: parseSlotEpochMs(todayStr, '13:00'),
-    },
-    {
-      id: 'bk-3',
-      kodeTiket: `BK-${compactDate}-003`,
-      nama: 'Yoga Pratama',
-      nomorWhatsApp: '6285611223344',
-      capsterId: 'hasan',
-      tanggal: todayStr,
-      jamSlot: '13:00',
-      status: 'Booked', // Saat ini 13:05 (baru 5 mnt, belum >15 mnt). Geser +15 mnt untuk demo auto-cancel!
-      alasanBatal: null,
-      waktuDibuat: simAnchor - 120 * min,
-    },
-    {
-      id: 'bk-4',
-      kodeTiket: `BK-${compactDate}-004`,
-      customerId: 'cust-2', // Terhubung ke pelanggan2 (081298765432)
-      nama: 'Bima Nugraha',
-      nomorWhatsApp: '6281298765432',
-      capsterId: 'raka',
-      tanggal: todayStr,
-      jamSlot: '15:00', // 115 menit mendatang dari 13:05 -> bisa reschedule!
-      status: 'Booked',
-      alasanBatal: null,
-      waktuDibuat: simAnchor - 90 * min,
-    },
-    {
-      id: 'bk-5',
-      kodeTiket: `BK-${compactDate}-005`,
-      customerId: 'cust-1', // Contoh riwayat Canceled otomatis milik pelanggan1
-      nama: 'Andi Pratama',
-      nomorWhatsApp: '6281234567890',
-      capsterId: 'raka',
-      tanggal: todayStr,
-      jamSlot: '11:00',
-      status: 'Canceled',
-      alasanBatal: 'otomatis',
-      waktuDibuat: simAnchor - 210 * min,
-    },
-    {
-      id: 'bk-6',
-      kodeTiket: `BK-${compactDate}-006`,
-      nama: 'Arif Hidayat',
-      nomorWhatsApp: '6281944556677',
-      capsterId: 'dimas',
-      tanggal: todayStr,
-      jamSlot: '16:00',
-      status: 'Booked',
-      alasanBatal: null,
-      waktuDibuat: simAnchor - 60 * min,
-    },
-    {
-      id: 'bk-7',
-      kodeTiket: `BK-${compactTomorrow}-001`,
-      nama: 'Teguh Santoso',
-      nomorWhatsApp: '6281223344556',
-      capsterId: 'hasan',
-      tanggal: tomorrowStr,
-      jamSlot: '14:00',
-      status: 'Booked',
-      alasanBatal: null,
-      waktuDibuat: simAnchor - 30 * min,
-    },
-  ];
+export function parseSlotEpochMs(tanggal: string, jamSlot: string): number {
+  return parseWibEpochMs(tanggal, jamSlot);
+}
 
-  const quotas: Record<string, DataKuotaAntrean> = {
-    [todayStr]: {
-      tanggal: todayStr,
-      kuotaMaksimal: 20,
-      kuotaTerpakai: 4,
-    },
-    [tomorrowStr]: {
-      tanggal: tomorrowStr,
-      kuotaMaksimal: 20,
-      kuotaTerpakai: 0,
-    },
-  };
-
-  const defaultJamKerja = {
-    hasan: { buka: '10:00', tutup: '21:00' },
-    raka: { buka: '10:00', tutup: '21:00' },
-    dimas: { buka: '10:00', tutup: '21:00' },
-  };
-
-  const schedules: Record<string, DataJadwalSlotCapster> = {
-    [`hasan_${todayStr}`]: {
-      capsterId: 'hasan',
-      tanggal: todayStr,
-      jamKerja: { buka: '10:00', tutup: '21:00' },
-      isLibur: false,
-      slotPenuhManual: ['12:00', '17:00'],
-    },
-    [`raka_${todayStr}`]: {
-      capsterId: 'raka',
-      tanggal: todayStr,
-      jamKerja: { buka: '10:00', tutup: '21:00' },
-      isLibur: false,
-      slotPenuhManual: ['14:00'],
-    },
-    [`dimas_${todayStr}`]: {
-      capsterId: 'dimas',
-      tanggal: todayStr,
-      jamKerja: { buka: '10:00', tutup: '21:00' },
-      isLibur: false,
-      slotPenuhManual: ['13:00', '14:00'],
-    },
-    [`dimas_${dayAfterStr}`]: {
-      capsterId: 'dimas',
-      tanggal: dayAfterStr,
-      jamKerja: { buka: '10:00', tutup: '21:00' },
-      isLibur: true,
-      alasanLibur: 'Izin acara keluarga',
-      slotPenuhManual: [],
-    },
-  };
-
+export function createInitialSystemState(): BarberDatabaseState {
+  const initialProfile = getInitialCapsterProfile();
   return {
-    version: DB_VERSION,
-    simAnchorMs: simAnchor,
-    realAnchorMs: realAnchor,
-    extraOffsetMinutes: 0,
-    useRealClock: false,
-    capsters: INITIAL_CAPSTERS,
-    customers,
-    walkinQueue,
-    quotas,
-    schedules,
-    bookings,
-    defaultJamKerja,
-    lastUpdatedAt: simAnchor,
+    version: STORAGE_VERSION,
+    capsters: mergeSystemCapsters(undefined, initialProfile),
+    capsterProfile: initialProfile,
+    customers: [],
+    walkinQueue: [],
+    quotas: {},
+    schedules: {},
+    bookings: [],
+    promos: getInitialSystemPromos(),
+    lastUpdatedAt: Date.now(),
   };
 }
 
+function migratePromosToV5(existingPromos?: Promo[]): Promo[] {
+  const systemDefaults = getInitialSystemPromos();
+  const potSajaDefault = systemDefaults[0];
+  if (!Array.isArray(existingPromos) || existingPromos.length === 0) {
+    return systemDefaults;
+  }
+  const hasPotongSaja = existingPromos.some((p) => p.id === 'promo-potong-saja');
+  const upgraded = existingPromos.map((p) =>
+    p.id === 'promo-potong-saja'
+      ? {
+          ...p,
+          diskonMin: potSajaDefault.diskonMin,
+          diskonMax: potSajaDefault.diskonMax,
+          deskripsi: potSajaDefault.deskripsi,
+          layananId:
+            Array.isArray(p.layananId) && p.layananId.length > 0
+              ? p.layananId
+              : potSajaDefault.layananId,
+          diperbaruiPada: Date.now(),
+        }
+      : p
+  );
+  return hasPotongSaja ? upgraded : [potSajaDefault, ...upgraded];
+}
+
 class BarberLocalStorageService {
+  private clearLegacyDataIfNeeded(): void {
+    if (typeof window === 'undefined') return;
+    for (const key of LEGACY_STORAGE_KEYS) {
+      if (window.localStorage.getItem(key) !== null) {
+        window.localStorage.removeItem(key);
+      }
+    }
+  }
+
   private readRaw(): BarberDatabaseState {
     if (typeof window === 'undefined') {
-      return createSeedData();
+      return createInitialSystemState();
     }
+    this.clearLegacyDataIfNeeded();
     try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (!raw) {
-        const seed = createSeedData();
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(seed));
-        return seed;
+      const rawCurrent = window.localStorage.getItem(STORAGE_KEY);
+      if (!rawCurrent) {
+        // Migrasi non-destruktif dari v5 atau v4 ke v6 tanpa menghapus pelanggan, antrean, booking, kuota, jadwal, atau sesi
+        for (const oldKey of [V5_STORAGE_KEY, V4_STORAGE_KEY]) {
+          const rawOld = window.localStorage.getItem(oldKey);
+          if (!rawOld) continue;
+          try {
+            const parsedOld = JSON.parse(rawOld) as Partial<BarberDatabaseState>;
+            if (parsedOld && (parsedOld.version === 5 || parsedOld.version === 4)) {
+              const profile: CapsterProfile = {
+                ...getInitialCapsterProfile(),
+                ...(parsedOld.capsterProfile || {}),
+              };
+              const migrated: BarberDatabaseState = {
+                version: STORAGE_VERSION,
+                capsters: mergeSystemCapsters(parsedOld.capsters, profile),
+                capsterProfile: profile,
+                customers: Array.isArray(parsedOld.customers)
+                  ? parsedOld.customers
+                  : [],
+                walkinQueue: Array.isArray(parsedOld.walkinQueue)
+                  ? parsedOld.walkinQueue
+                  : [],
+                quotas: parsedOld.quotas || {},
+                schedules: parsedOld.schedules || {},
+                bookings: Array.isArray(parsedOld.bookings)
+                  ? parsedOld.bookings
+                  : [],
+                promos: migratePromosToV5(parsedOld.promos),
+                lastUpdatedAt: Date.now(),
+              };
+              window.localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
+              window.localStorage.removeItem(oldKey);
+              return migrated;
+            }
+          } catch {
+            // Lanjut cek versi sebelumnya jika korup
+          }
+        }
+        const fresh = createInitialSystemState();
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(fresh));
+        return fresh;
       }
-      const parsed = JSON.parse(raw) as BarberDatabaseState;
-      if (!parsed || parsed.version !== DB_VERSION) {
-        const seed = createSeedData();
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(seed));
-        return seed;
+
+      const parsed = JSON.parse(rawCurrent) as BarberDatabaseState;
+      if (!parsed || parsed.version !== STORAGE_VERSION) {
+        const fresh = createInitialSystemState();
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(fresh));
+        window.localStorage.removeItem(SESSION_ROLE_KEY);
+        window.localStorage.removeItem(CUSTOMER_SESSION_ID_KEY);
+        window.localStorage.removeItem(CAPSTER_SESSION_ID_KEY);
+        return fresh;
       }
-      // Pastikan kompatibilitas jika customers belum ada
-      if (!Array.isArray(parsed.customers)) {
-        const seed = createSeedData();
-        parsed.customers = seed.customers;
-      }
-      return parsed;
+
+      const profile: CapsterProfile = {
+        ...getInitialCapsterProfile(),
+        ...(parsed.capsterProfile || {}),
+      };
+
+      // Pastikan akun sistem capster (Hasan) selalu ada & mempertahankan password hash terbaru
+      return {
+        ...parsed,
+        capsterProfile: profile,
+        capsters: mergeSystemCapsters(parsed.capsters, profile),
+        customers: Array.isArray(parsed.customers) ? parsed.customers : [],
+        walkinQueue: Array.isArray(parsed.walkinQueue)
+          ? parsed.walkinQueue
+          : [],
+        bookings: Array.isArray(parsed.bookings) ? parsed.bookings : [],
+        promos: Array.isArray(parsed.promos)
+          ? parsed.promos
+          : getInitialSystemPromos(),
+        quotas: parsed.quotas || {},
+        schedules: parsed.schedules || {},
+      };
     } catch {
-      return createSeedData();
+      const fresh = createInitialSystemState();
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(fresh));
+      return fresh;
     }
   }
 
   private writeRaw(state: BarberDatabaseState): BarberDatabaseState {
+    const profile: CapsterProfile = {
+      ...getInitialCapsterProfile(),
+      ...(state.capsterProfile || {}),
+    };
     const nextState: BarberDatabaseState = {
       ...state,
-      lastUpdatedAt: getEffectiveNowMs(state),
+      version: STORAGE_VERSION,
+      capsterProfile: profile,
+      capsters: mergeSystemCapsters(state.capsters, profile),
+      promos: Array.isArray(state.promos)
+        ? state.promos
+        : getInitialSystemPromos(),
+      lastUpdatedAt: Date.now(),
     };
     if (typeof window !== 'undefined') {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
@@ -514,19 +389,68 @@ class BarberLocalStorageService {
     return nextState;
   }
 
+  // =========================================================================
+  // ROLE & SESSION MANAGEMENT
+  // =========================================================================
+
+  public getSessionRole(): SessionRole {
+    if (typeof window === 'undefined') return null;
+    const role = window.localStorage.getItem(SESSION_ROLE_KEY);
+    if (role === 'pelanggan' && this.getCustomerSessionId()) {
+      return 'pelanggan';
+    }
+    if (role === 'capster' && this.getCapsterSessionId()) {
+      return 'capster';
+    }
+    return null;
+  }
+
+  public getCustomerSessionId(): string | null {
+    if (typeof window === 'undefined') return null;
+    return window.localStorage.getItem(CUSTOMER_SESSION_ID_KEY);
+  }
+
+  public getCapsterSessionId(): string | null {
+    if (typeof window === 'undefined') return null;
+    return window.localStorage.getItem(CAPSTER_SESSION_ID_KEY);
+  }
+
+  private requireCapsterRole(): ServiceResult<Capster> {
+    const role = this.getSessionRole();
+    const capsterId = this.getCapsterSessionId();
+    if (role !== 'capster' || !capsterId) {
+      return {
+        ok: false,
+        errorCode: 'UNAUTHORIZED',
+        message: 'Halaman dan aksi ini khusus capster.',
+      };
+    }
+    const state = this.readRaw();
+    const capster = state.capsters.find((c) => c.id === capsterId);
+    if (!capster) {
+      return {
+        ok: false,
+        errorCode: 'UNAUTHORIZED',
+        message: 'Sesi capster tidak valid.',
+      };
+    }
+    return { ok: true, data: capster };
+  }
+
   /**
-   * Memeriksa keterlambatan booking > 15 menit secara otomatis.
-   * Jika lewat 15 menit dari jam slot tanpa diproses, status menjadi Canceled (otomatis)
-   * sehingga slot kembali Available untuk walk-in / booking baru.
+   * Evaluasi berkala waktu nyata WIB:
+   * 1) Booking terlambat > 15 menit -> otomatis Canceled ('otomatis')
+   * 2) Antrean walk-in Waiting dari hari operasional sebelumnya -> otomatis Kedaluwarsa
    */
   public syncAndGetState(): BarberDatabaseState {
     const state = this.readRaw();
-    const nowMs = getEffectiveNowMs(state);
+    const nowMs = Date.now();
+    const activeSessionKey = getOperationalSessionKey(nowMs);
     let changed = false;
 
     const updatedBookings = state.bookings.map((b) => {
       if (b.status !== 'Booked') return b;
-      const slotMs = parseSlotEpochMs(b.tanggal, b.jamSlot);
+      const slotMs = parseWibEpochMs(b.tanggal, b.jamSlot);
       const deadlineMs = slotMs + LATE_TOLERANCE_MINUTES * 60_000;
       if (nowMs > deadlineMs) {
         changed = true;
@@ -534,23 +458,40 @@ class BarberLocalStorageService {
           ...b,
           status: 'Canceled' as const,
           alasanBatal: 'otomatis' as const,
+          catatanBatal: 'Terlambat melewati batas toleransi 15 menit',
         };
       }
       return b;
+    });
+
+    const updatedWalkins = state.walkinQueue.map((w) => {
+      if (w.status !== 'Waiting') return w;
+      const itemKey = w.kunciHariOperasional || w.tanggal;
+      // Kedaluwarsa jika bukan sesi operasional berjalan atau jam tutup hari tersebut sudah lewat
+      const itemHours = getOperationalHoursForDate(itemKey);
+      const itemCloseMs = parseWibEpochMs(itemKey, itemHours.tutup);
+      if (itemKey < activeSessionKey || nowMs >= itemCloseMs) {
+        changed = true;
+        return {
+          ...w,
+          status: 'Kedaluwarsa' as const,
+        };
+      }
+      return w;
     });
 
     if (changed) {
       return this.writeRaw({
         ...state,
         bookings: updatedBookings,
+        walkinQueue: updatedWalkins,
       });
     }
     return state;
   }
 
   // =========================================================================
-  // AUTH PELANGGAN (D5 DataAkunPelanggan)
-  // Catatan: Autentikasi demo localStorage; produksi perlu backend/Firebase Auth
+  // AUTH PELANGGAN & AUTH CAPSTER (TERPISAH KETAT)
   // =========================================================================
 
   public registerCustomer(params: {
@@ -607,22 +548,27 @@ class BarberLocalStorageService {
       };
     }
 
-    const nowMs = getEffectiveNowMs(state);
+    const validCapster = SYSTEM_CAPSTERS.find(
+      (c) => c.id === params.capsterFavoritId
+    )
+      ? params.capsterFavoritId
+      : SYSTEM_CAPSTERS[0]?.id;
+
     const newCustomer: Customer = {
       id: `cust-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       nama: namaTrim,
       nomorWhatsApp: waCheck.normalized,
       email: emailCheck.cleaned,
       passwordHash: hashPasswordDemo(params.password),
-      capsterFavoritId: params.capsterFavoritId || undefined,
-      dibuatPada: nowMs,
+      capsterFavoritId: validCapster,
+      dibuatPada: Date.now(),
     };
 
     const nextState = this.writeRaw({
       ...state,
       customers: [...state.customers, newCustomer],
     });
-    this.setCustomerSessionId(newCustomer.id);
+    this.setCustomerSession(newCustomer.id);
 
     return {
       ok: true,
@@ -634,6 +580,28 @@ class BarberLocalStorageService {
     nomorWhatsApp: string,
     password: string
   ): ServiceResult<{ customer: Customer; state: BarberDatabaseState }> {
+    if (this.getSessionRole() === 'capster') {
+      return {
+        ok: false,
+        errorCode: 'UNAUTHORIZED',
+        message: 'Akun ini bukan akun pelanggan.',
+      };
+    }
+
+    const state = this.syncAndGetState();
+    const trimmedInput = nomorWhatsApp.trim().toLowerCase();
+    if (
+      state.capsters.some(
+        (c) => c.username.trim().toLowerCase() === trimmedInput
+      )
+    ) {
+      return {
+        ok: false,
+        errorCode: 'UNAUTHORIZED',
+        message: 'Akun ini bukan akun pelanggan.',
+      };
+    }
+
     const waCheck = validateIndonesianWhatsApp(nomorWhatsApp);
     if (!waCheck.valid) {
       return {
@@ -650,7 +618,6 @@ class BarberLocalStorageService {
       };
     }
 
-    const state = this.syncAndGetState();
     const customer = state.customers.find(
       (c) => c.nomorWhatsApp === waCheck.normalized
     );
@@ -662,38 +629,160 @@ class BarberLocalStorageService {
       };
     }
 
-    this.setCustomerSessionId(customer.id);
+    this.setCustomerSession(customer.id);
     return {
       ok: true,
       data: { customer, state },
     };
   }
 
-  public loginDemoCustomerById(
-    customerId: string
-  ): ServiceResult<{ customer: Customer; state: BarberDatabaseState }> {
-    const state = this.syncAndGetState();
-    const customer = state.customers.find((c) => c.id === customerId);
-    if (!customer) {
-      return {
-        ok: false,
-        errorCode: 'NOT_FOUND',
-        message: 'Akun demo tidak ditemukan.',
-      };
+  public logoutCustomer(): void {
+    if (typeof window === 'undefined') return;
+    if (window.localStorage.getItem(SESSION_ROLE_KEY) === 'pelanggan') {
+      window.localStorage.removeItem(SESSION_ROLE_KEY);
     }
-    this.setCustomerSessionId(customer.id);
-    return { ok: true, data: { customer, state } };
+    window.localStorage.removeItem(CUSTOMER_SESSION_ID_KEY);
   }
 
-  public logoutCustomer(): void {
-    this.setCustomerSessionId(null);
+  private setCustomerSession(customerId: string): void {
+    if (typeof window === 'undefined') return;
+    window.localStorage.removeItem(CAPSTER_SESSION_ID_KEY);
+    window.localStorage.setItem(SESSION_ROLE_KEY, 'pelanggan');
+    window.localStorage.setItem(CUSTOMER_SESSION_ID_KEY, customerId);
   }
 
   public getCurrentCustomer(state?: BarberDatabaseState): Customer | null {
+    if (this.getSessionRole() !== 'pelanggan') return null;
     const id = this.getCustomerSessionId();
     if (!id) return null;
     const current = state || this.readRaw();
     return current.customers.find((c) => c.id === id) || null;
+  }
+
+  public loginCapster(
+    username: string,
+    password: string
+  ): ServiceResult<Capster> {
+    if (this.getSessionRole() === 'pelanggan') {
+      return {
+        ok: false,
+        errorCode: 'UNAUTHORIZED',
+        message: 'Akun ini bukan akun capster.',
+      };
+    }
+
+    const cleanUser = username.trim().toLowerCase();
+    if (!cleanUser || !password) {
+      return {
+        ok: false,
+        errorCode: 'VALIDATION_ERROR',
+        message: 'Username dan password wajib diisi.',
+      };
+    }
+
+    const state = this.syncAndGetState();
+    const waCheck = validateIndonesianWhatsApp(username);
+    if (
+      waCheck.valid &&
+      state.customers.some((c) => c.nomorWhatsApp === waCheck.normalized)
+    ) {
+      return {
+        ok: false,
+        errorCode: 'UNAUTHORIZED',
+        message: 'Akun ini bukan akun capster.',
+      };
+    }
+
+    const found = state.capsters.find(
+      (c) => c.username.trim().toLowerCase() === cleanUser
+    );
+    if (!found || found.passwordHash !== hashPasswordDemo(password)) {
+      return {
+        ok: false,
+        errorCode: 'VALIDATION_ERROR',
+        message: 'Username atau password salah.',
+      };
+    }
+
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem(CUSTOMER_SESSION_ID_KEY);
+      window.localStorage.setItem(SESSION_ROLE_KEY, 'capster');
+      window.localStorage.setItem(CAPSTER_SESSION_ID_KEY, found.id);
+    }
+    return { ok: true, data: found };
+  }
+
+  public logoutCapster(): void {
+    if (typeof window === 'undefined') return;
+    if (window.localStorage.getItem(SESSION_ROLE_KEY) === 'capster') {
+      window.localStorage.removeItem(SESSION_ROLE_KEY);
+    }
+    window.localStorage.removeItem(CAPSTER_SESSION_ID_KEY);
+  }
+
+  public getCurrentCapster(): Capster | null {
+    if (this.getSessionRole() !== 'capster') return null;
+    const id = this.getCapsterSessionId();
+    if (!id) return null;
+    const state = this.readRaw();
+    return state.capsters.find((c) => c.id === id) || null;
+  }
+
+  public changeCapsterPassword(params: {
+    currentPassword: string;
+    newPassword: string;
+    confirmPassword: string;
+  }): ServiceResult<BarberDatabaseState> {
+    const auth = this.requireCapsterRole();
+    if (!auth.ok || !auth.data) {
+      return { ok: false, errorCode: auth.errorCode, message: auth.message };
+    }
+
+    if (!params.currentPassword) {
+      return {
+        ok: false,
+        errorCode: 'VALIDATION_ERROR',
+        message: 'Password saat ini wajib diisi.',
+      };
+    }
+
+    if (
+      hashPasswordDemo(params.currentPassword) !== auth.data.passwordHash
+    ) {
+      return {
+        ok: false,
+        errorCode: 'VALIDATION_ERROR',
+        message: 'Password saat ini salah.',
+      };
+    }
+
+    if (!params.newPassword || params.newPassword.length < 6) {
+      return {
+        ok: false,
+        errorCode: 'VALIDATION_ERROR',
+        message: 'Password baru wajib minimal 6 karakter.',
+      };
+    }
+
+    if (params.newPassword !== params.confirmPassword) {
+      return {
+        ok: false,
+        errorCode: 'VALIDATION_ERROR',
+        message: 'Konfirmasi password baru tidak sama.',
+      };
+    }
+
+    const state = this.syncAndGetState();
+    const updatedHash = hashPasswordDemo(params.newPassword);
+    const nextCapsters = state.capsters.map((c) =>
+      c.id === auth.data!.id ? { ...c, passwordHash: updatedHash } : c
+    );
+
+    const nextState = this.writeRaw({
+      ...state,
+      capsters: nextCapsters,
+    });
+    return { ok: true, data: nextState };
   }
 
   public updateCustomerProfile(
@@ -760,7 +849,7 @@ class BarberLocalStorageService {
       ...existing,
       nama: namaTrim,
       email: emailCheck.cleaned,
-      capsterFavoritId: params.capsterFavoritId || undefined,
+      capsterFavoritId: params.capsterFavoritId || SYSTEM_CAPSTERS[0]?.id,
       passwordHash: nextPasswordHash,
     };
 
@@ -806,7 +895,6 @@ class BarberLocalStorageService {
       };
     }
 
-    // Batalkan antrean walk-in & booking aktif milik pelanggan terlebih dahulu
     const nextWalkins = state.walkinQueue.map((w) =>
       w.customerId === customerId && w.status === 'Waiting'
         ? { ...w, status: 'Canceled' as const }
@@ -834,23 +922,86 @@ class BarberLocalStorageService {
   }
 
   // =========================================================================
-  // KUOTA, JADWAL & ESTIMASI
+  // KUOTA, JADWAL & ESTIMASI (REAL-TIME WIB)
   // =========================================================================
 
-  public getQuotaForDate(
+  public getQuotaForOperationalDay(
     state: BarberDatabaseState,
-    tanggal: string
+    operationalDayKey: string
   ): DataKuotaAntrean {
-    const existing = state.quotas[tanggal];
-    if (existing) return existing;
-    const countToday = state.walkinQueue.filter(
-      (q) => q.tanggal === tanggal
+    const existing = state.quotas[operationalDayKey];
+    const countUsed = state.walkinQueue.filter(
+      (q) =>
+        (q.kunciHariOperasional || q.tanggal) === operationalDayKey &&
+        q.status !== 'Canceled'
     ).length;
+
     return {
-      tanggal,
-      kuotaMaksimal: 20,
-      kuotaTerpakai: countToday,
+      tanggal: operationalDayKey,
+      kuotaMaksimal: existing ? existing.kuotaMaksimal : WALKIN_DAILY_QUOTA,
+      kuotaTerpakai: countUsed,
     };
+  }
+
+  public getSlotSpanHours(
+    startJam: string,
+    slotsNeeded: number,
+    validHours: string[]
+  ): string[] | null {
+    const safeNeeded = Math.max(1, Math.round(slotsNeeded));
+    const idx = validHours.indexOf(startJam);
+    if (idx === -1 || idx + safeNeeded > validHours.length) {
+      return null;
+    }
+    return validHours.slice(idx, idx + safeNeeded);
+  }
+
+  public getBookingCoveredSlots(booking: DataBooking): string[] {
+    if (
+      Array.isArray(booking.slotTercakup) &&
+      booking.slotTercakup.length > 0
+    ) {
+      return booking.slotTercakup;
+    }
+    const opHours = getOperationalHoursForDate(booking.tanggal);
+    const validHours = generateHourSlots(opHours.buka, opHours.tutup);
+    const needed = booking.durasiTotalMenit
+      ? Math.max(1, Math.ceil(booking.durasiTotalMenit / 60))
+      : 1;
+    return (
+      this.getSlotSpanHours(booking.jamSlot, needed, validHours) || [
+        booking.jamSlot,
+      ]
+    );
+  }
+
+  public canStartSlotFitDuration(
+    slots: ComputedSlotInfo[],
+    startJam: string,
+    slotsNeeded: number
+  ): { ok: boolean; coveredSlots: string[]; reason?: string } {
+    const safeNeeded = Math.max(1, Math.round(slotsNeeded));
+    const idx = slots.findIndex((s) => s.jam === startJam);
+    if (idx === -1) {
+      return { ok: false, coveredSlots: [], reason: 'Slot tidak ditemukan.' };
+    }
+    if (idx + safeNeeded > slots.length) {
+      return {
+        ok: false,
+        coveredSlots: [],
+        reason: `Durasi ${safeNeeded} slot melewati jam tutup toko.`,
+      };
+    }
+    const span = slots.slice(idx, idx + safeNeeded);
+    const blocked = span.find((s) => s.status !== 'Available');
+    if (blocked) {
+      return {
+        ok: false,
+        coveredSlots: span.map((s) => s.jam),
+        reason: `Slot lanjutan pukul ${blocked.jam} WIB berstatus ${blocked.status}.`,
+      };
+    }
+    return { ok: true, coveredSlots: span.map((s) => s.jam) };
   }
 
   public getScheduleConfig(
@@ -860,24 +1011,31 @@ class BarberLocalStorageService {
   ): DataJadwalSlotCapster {
     const key = `${capsterId}_${tanggal}`;
     const existing = state.schedules[key];
-    if (existing) return existing;
-    const defHours = state.defaultJamKerja[capsterId] || {
-      buka: '10:00',
-      tutup: '21:00',
-    };
+    const defaultHours = getOperationalHoursForDate(tanggal);
+    if (existing) {
+      return {
+        ...existing,
+        jamKerja: {
+          buka: defaultHours.buka,
+          tutup: defaultHours.tutup,
+        },
+        manualSlots: existing.manualSlots || {},
+      };
+    }
     return {
       capsterId,
       tanggal,
-      jamKerja: { ...defHours },
+      jamKerja: { buka: defaultHours.buka, tutup: defaultHours.tutup },
       isLibur: false,
-      slotPenuhManual: [],
+      manualSlots: {},
     };
   }
 
   public getComputedSlots(
     state: BarberDatabaseState,
     capsterId: string,
-    tanggal: string
+    tanggal: string,
+    excludeBookingId?: string
   ): {
     config: DataJadwalSlotCapster;
     slots: ComputedSlotInfo[];
@@ -887,27 +1045,37 @@ class BarberLocalStorageService {
       return { config, slots: [] };
     }
     const hours = generateHourSlots(config.jamKerja.buka, config.jamKerja.tutup);
-    const nowMs = getEffectiveNowMs(state);
+    const nowMs = Date.now();
 
     const slots: ComputedSlotInfo[] = hours.map((jam) => {
-      const slotEpoch = parseSlotEpochMs(tanggal, jam);
+      const slotEpoch = parseWibEpochMs(tanggal, jam);
       const activeBooking = state.bookings.find(
         (b) =>
+          b.id !== excludeBookingId &&
           b.capsterId === capsterId &&
           b.tanggal === tanggal &&
-          b.jamSlot === jam &&
-          (b.status === 'Booked' || b.status === 'In-Service')
+          (b.status === 'Booked' || b.status === 'In-Service') &&
+          this.getBookingCoveredSlots(b).includes(jam)
       );
-      const isManualFull = config.slotPenuhManual.includes(jam);
-      const sudahLewat = nowMs > slotEpoch + LATE_TOLERANCE_MINUTES * 60_000;
+      const manualEntry = config.manualSlots[jam];
+      // Slot yang waktunya sudah lewat otomatis tidak bisa dipilih
+      const sudahLewat = nowMs >= slotEpoch;
 
       let status: SlotStatus = 'Available';
-      if (isManualFull) {
-        status = 'Full';
+      let sumber: ComputedSlotInfo['sumber'] = 'default';
+
+      if (manualEntry?.tipe === 'tidak_tersedia') {
+        status = 'Tidak Tersedia';
+        sumber = 'tidak_tersedia';
+      } else if (manualEntry?.tipe === 'terisi_manual') {
+        status = 'Booked';
+        sumber = 'terisi_manual';
       } else if (activeBooking) {
         status = activeBooking.status === 'In-Service' ? 'Full' : 'Booked';
+        sumber = 'booking';
       } else if (sudahLewat) {
         status = 'Full';
+        sumber = 'lewat';
       }
 
       return {
@@ -915,6 +1083,8 @@ class BarberLocalStorageService {
         tanggal,
         jam,
         status,
+        sumber,
+        catatanManual: manualEntry?.catatan,
         bookingId: activeBooking?.id,
         bookingKode: activeBooking?.kodeTiket,
         bookingNama: activeBooking?.nama,
@@ -928,18 +1098,20 @@ class BarberLocalStorageService {
 
   public getQueueEstimation(
     state: BarberDatabaseState,
-    tanggal: string
+    operationalDayKey: string
   ): QueueEstimationSummary {
+    const nowMs = Date.now();
+
     const completedWalkins = state.walkinQueue.filter(
       (q) =>
-        q.tanggal === tanggal &&
+        (q.kunciHariOperasional || q.tanggal) === operationalDayKey &&
         q.status === 'Selesai' &&
         typeof q.durasiAktual === 'number' &&
         q.durasiAktual > 0
     );
     const completedBookings = state.bookings.filter(
       (b) =>
-        b.tanggal === tanggal &&
+        b.tanggal === operationalDayKey &&
         b.status === 'Selesai' &&
         typeof b.durasiAktual === 'number' &&
         b.durasiAktual > 0
@@ -957,22 +1129,81 @@ class BarberLocalStorageService {
       : Math.round(durations.reduce((acc, v) => acc + v, 0) / durations.length);
 
     const waitingList = state.walkinQueue
-      .filter((q) => q.tanggal === tanggal && q.status === 'Waiting')
+      .filter(
+        (q) =>
+          (q.kunciHariOperasional || q.tanggal) === operationalDayKey &&
+          q.status === 'Waiting'
+      )
       .sort((a, b) => a.waktuAmbil - b.waktuAmbil);
 
     const sedangDilayaniWalkin = state.walkinQueue
-      .filter((q) => q.tanggal === tanggal && q.status === 'In-Service')
+      .filter(
+        (q) =>
+          (q.kunciHariOperasional || q.tanggal) === operationalDayKey &&
+          q.status === 'In-Service'
+      )
       .sort(
         (a, b) =>
           (a.waktuMulai || a.waktuAmbil) - (b.waktuMulai || b.waktuAmbil)
       );
 
     const sedangDilayaniBooking = state.bookings
-      .filter((b) => b.tanggal === tanggal && b.status === 'In-Service')
+      .filter(
+        (b) => b.tanggal === operationalDayKey && b.status === 'In-Service'
+      )
       .sort(
         (a, b) =>
           (a.waktuMulai || a.waktuDibuat) - (b.waktuMulai || b.waktuDibuat)
       );
+
+    const inServiceDetails: InServiceDetail[] = [
+      ...sedangDilayaniWalkin.map((w) => {
+        const startMs = w.waktuMulai || w.waktuAmbil;
+        const lamaBerjalanMenit = Math.max(
+          0,
+          Math.floor((nowMs - startMs) / 60_000)
+        );
+        const sisaRaw = rataRataDurasiMenit - lamaBerjalanMenit;
+        return {
+          id: w.id,
+          tipe: 'walkin' as const,
+          kodeAtauNomor: w.nomorAntrean,
+          namaTersamarkan: maskCustomerName(w.namaPelanggan),
+          capsterId: w.capsterId,
+          waktuMulai: startMs,
+          jamMulaiHHMM: formatTimeWibHHMM(startMs),
+          lamaBerjalanMenit,
+          estimasiSisaMenit: Math.max(0, sisaRaw),
+          melebihiEstimasi: sisaRaw <= 0,
+        };
+      }),
+      ...sedangDilayaniBooking.map((b) => {
+        const startMs = b.waktuMulai || b.waktuDibuat;
+        const lamaBerjalanMenit = Math.max(
+          0,
+          Math.floor((nowMs - startMs) / 60_000)
+        );
+        const sisaRaw = rataRataDurasiMenit - lamaBerjalanMenit;
+        return {
+          id: b.id,
+          tipe: 'booking' as const,
+          kodeAtauNomor: b.kodeTiket,
+          namaTersamarkan: maskCustomerName(b.nama),
+          capsterId: b.capsterId,
+          waktuMulai: startMs,
+          jamMulaiHHMM: formatTimeWibHHMM(startMs),
+          lamaBerjalanMenit,
+          estimasiSisaMenit: Math.max(0, sisaRaw),
+          melebihiEstimasi: sisaRaw <= 0,
+        };
+      }),
+    ].sort((a, b) => a.waktuMulai - b.waktuMulai);
+
+    // Sisa waktu pelanggan yang sedang In-Service (0 jika tidak ada)
+    const sisaWaktuInServiceMenit =
+      inServiceDetails.length > 0
+        ? Math.min(...inServiceDetails.map((d) => d.estimasiSisaMenit))
+        : 0;
 
     return {
       rataRataDurasiMenit,
@@ -980,6 +1211,8 @@ class BarberLocalStorageService {
       menggunakanDefault,
       sedangDilayaniWalkin,
       sedangDilayaniBooking,
+      inServiceDetails,
+      sisaWaktuInServiceMenit,
       waitingList,
     };
   }
@@ -989,8 +1222,6 @@ class BarberLocalStorageService {
   // =========================================================================
   public takeWalkinQueue(params: {
     customerId?: string;
-    namaPelanggan?: string;
-    nomorWhatsApp?: string;
     capsterId?: string;
   }): ServiceResult<{
     ticket: DataAntreanWalkin;
@@ -999,14 +1230,25 @@ class BarberLocalStorageService {
     state: BarberDatabaseState;
   }> {
     const state = this.syncAndGetState();
-    const nowMs = getEffectiveNowMs(state);
-    const todayStr = formatDateYYYYMMDD(new Date(nowMs));
+    const nowMs = Date.now();
+    const shopStatus = getShopOperationalStatus(nowMs);
 
+    if (!shopStatus.isOpen) {
+      return {
+        ok: false,
+        errorCode: 'SHOP_CLOSED',
+        message:
+          shopStatus.closedMessage ||
+          'Barbershop sedang tutup di luar jam operasional.',
+      };
+    }
+
+    const opKey = shopStatus.operationalDayKey;
     const customer = params.customerId
       ? state.customers.find((c) => c.id === params.customerId)
-      : undefined;
+      : this.getCurrentCustomer(state);
 
-    if (params.customerId && !customer) {
+    if (!customer) {
       return {
         ok: false,
         errorCode: 'AUTH_REQUIRED',
@@ -1014,45 +1256,45 @@ class BarberLocalStorageService {
       };
     }
 
-    // Cek aturan: satu pelanggan hanya boleh punya SATU antrean walk-in aktif per hari
-    if (customer) {
-      const existingActive = state.walkinQueue.find(
-        (w) =>
-          w.tanggal === todayStr &&
-          w.customerId === customer.id &&
-          (w.status === 'Waiting' || w.status === 'In-Service')
-      );
-      if (existingActive) {
-        return {
-          ok: false,
-          errorCode: 'DUPLICATE_WALKIN',
-          message: `Anda sudah memiliki antrean walk-in aktif hari ini (${existingActive.nomorAntrean}). Satu pelanggan hanya boleh memegang satu antrean aktif per hari.`,
-        };
-      }
-
-      // Cek bentrok dengan booking aktif di hari ini
-      const est = this.getQueueEstimation(state, todayStr);
-      const estimatedServiceStartMs =
-        nowMs + est.waitingList.length * est.rataRataDurasiMenit * 60_000;
-
-      const conflictingBooking = state.bookings.find((b) => {
-        if (b.tanggal !== todayStr || b.customerId !== customer.id) return false;
-        if (b.status === 'In-Service') return true;
-        if (b.status !== 'Booked') return false;
-        const slotMs = parseSlotEpochMs(b.tanggal, b.jamSlot);
-        return Math.abs(estimatedServiceStartMs - slotMs) < 60 * 60_000;
-      });
-
-      if (conflictingBooking) {
-        return {
-          ok: false,
-          errorCode: 'SCHEDULE_CONFLICT',
-          message: `Waktu perkiraan walk-in bentrok dengan jadwal booking aktif Anda pukul ${conflictingBooking.jamSlot} WIB (${conflictingBooking.kodeTiket}).`,
-        };
-      }
+    // Cek aturan: satu pelanggan hanya boleh punya SATU antrean walk-in aktif per hari operasional
+    const existingActive = state.walkinQueue.find(
+      (w) =>
+        (w.kunciHariOperasional || w.tanggal) === opKey &&
+        w.customerId === customer.id &&
+        (w.status === 'Waiting' || w.status === 'In-Service')
+    );
+    if (existingActive) {
+      return {
+        ok: false,
+        errorCode: 'DUPLICATE_WALKIN',
+        message: `Anda sudah memiliki antrean walk-in aktif hari ini (${existingActive.nomorAntrean}). Satu pelanggan hanya boleh memegang satu antrean aktif per hari.`,
+      };
     }
 
-    const quota = this.getQuotaForDate(state, todayStr);
+    const estBefore = this.getQueueEstimation(state, opKey);
+    const estWaitMs =
+      (estBefore.sisaWaktuInServiceMenit +
+        estBefore.waitingList.length * estBefore.rataRataDurasiMenit) *
+      60_000;
+    const estimatedServiceStartMs = nowMs + estWaitMs;
+
+    const conflictingBooking = state.bookings.find((b) => {
+      if (b.tanggal !== opKey || b.customerId !== customer.id) return false;
+      if (b.status === 'In-Service') return true;
+      if (b.status !== 'Booked') return false;
+      const slotMs = parseWibEpochMs(b.tanggal, b.jamSlot);
+      return Math.abs(estimatedServiceStartMs - slotMs) < 60 * 60_000;
+    });
+
+    if (conflictingBooking) {
+      return {
+        ok: false,
+        errorCode: 'SCHEDULE_CONFLICT',
+        message: `Waktu perkiraan walk-in bentrok dengan jadwal booking aktif Anda pukul ${conflictingBooking.jamSlot} WIB (${conflictingBooking.kodeTiket}).`,
+      };
+    }
+
+    const quota = this.getQuotaForOperationalDay(state, opKey);
     if (quota.kuotaTerpakai >= quota.kuotaMaksimal) {
       return {
         ok: false,
@@ -1062,8 +1304,10 @@ class BarberLocalStorageService {
       };
     }
 
-    // Hitung nomor urut tertinggi hari ini agar tidak pernah duplikat atau tertukar
-    const todayItems = state.walkinQueue.filter((q) => q.tanggal === todayStr);
+    // Hitung nomor urut tertinggi pada kunciHariOperasional aktif (reset A001 tiap hari di jam buka)
+    const todayItems = state.walkinQueue.filter(
+      (q) => (q.kunciHariOperasional || q.tanggal) === opKey
+    );
     const maxSeq = todayItems.reduce((max, item) => {
       const num = parseInt(item.nomorAntrean.replace(/\D/g, ''), 10);
       return Number.isNaN(num) ? max : Math.max(max, num);
@@ -1071,20 +1315,26 @@ class BarberLocalStorageService {
     const nextSeq = maxSeq + 1;
     const nomorAntrean = `A${String(nextSeq).padStart(3, '0')}`;
 
+    const chosenCapster =
+      SYSTEM_CAPSTERS.find((c) => c.id === params.capsterId)?.id ||
+      customer.capsterFavoritId ||
+      SYSTEM_CAPSTERS[0]?.id;
+
     const newTicket: DataAntreanWalkin = {
-      id: `wk-${todayStr}-${nextSeq}-${Math.random().toString(36).slice(2, 6)}`,
+      id: `wk-${opKey}-${nextSeq}-${Math.random().toString(36).slice(2, 6)}`,
       nomorAntrean,
-      tanggal: todayStr,
-      customerId: customer?.id,
-      namaPelanggan: customer?.nama || params.namaPelanggan?.trim() || undefined,
-      nomorWhatsApp: customer?.nomorWhatsApp || params.nomorWhatsApp,
+      tanggal: opKey,
+      kunciHariOperasional: opKey,
+      customerId: customer.id,
+      namaPelanggan: customer.nama,
+      nomorWhatsApp: customer.nomorWhatsApp,
       waktuAmbil: nowMs,
       status: 'Waiting',
-      capsterId: params.capsterId || customer?.capsterFavoritId || undefined,
+      capsterId: chosenCapster,
     };
 
     const nextQuota: DataKuotaAntrean = {
-      tanggal: todayStr,
+      tanggal: opKey,
       kuotaMaksimal: quota.kuotaMaksimal,
       kuotaTerpakai: quota.kuotaTerpakai + 1,
     };
@@ -1094,18 +1344,17 @@ class BarberLocalStorageService {
       walkinQueue: [...state.walkinQueue, newTicket],
       quotas: {
         ...state.quotas,
-        [todayStr]: nextQuota,
+        [opKey]: nextQuota,
       },
     });
 
-    this.setCustomerWalkinId(newTicket.id);
-
-    const est = this.getQueueEstimation(nextState, todayStr);
+    const est = this.getQueueEstimation(nextState, opKey);
     const antreanDiDepan = Math.max(
       0,
       est.waitingList.findIndex((w) => w.id === newTicket.id)
     );
-    const estimasiMenit = antreanDiDepan * est.rataRataDurasiMenit;
+    const estimasiMenit =
+      est.sisaWaktuInServiceMenit + antreanDiDepan * est.rataRataDurasiMenit;
 
     return {
       ok: true,
@@ -1138,11 +1387,22 @@ class BarberLocalStorageService {
         message: 'Hanya antrean berstatus Waiting yang dapat dibatalkan.',
       };
     }
+
+    const opKey = target.kunciHariOperasional || target.tanggal;
+    const quota = this.getQuotaForOperationalDay(state, opKey);
+
     const nextState = this.writeRaw({
       ...state,
       walkinQueue: state.walkinQueue.map((w) =>
         w.id === walkinId ? { ...w, status: 'Canceled' as const } : w
       ),
+      quotas: {
+        ...state.quotas,
+        [opKey]: {
+          ...quota,
+          kuotaTerpakai: Math.max(0, quota.kuotaTerpakai - 1),
+        },
+      },
     });
     return { ok: true, data: nextState };
   }
@@ -1155,8 +1415,7 @@ class BarberLocalStorageService {
     capsterId: string;
     tanggal: string;
     jamSlot: string;
-    nama: string;
-    nomorWhatsApp: string;
+    selectedServices?: SelectedServiceInput[];
   }): ServiceResult<{
     booking: DataBooking;
     state: BarberDatabaseState;
@@ -1164,41 +1423,99 @@ class BarberLocalStorageService {
     const state = this.syncAndGetState();
     const customer = params.customerId
       ? state.customers.find((c) => c.id === params.customerId)
-      : undefined;
+      : this.getCurrentCustomer(state);
 
-    const finalNama = (customer?.nama || params.nama).trim();
-    const finalRawPhone = customer?.nomorWhatsApp || params.nomorWhatsApp;
-
-    if (finalNama.length < 2) {
+    if (!customer) {
       return {
         ok: false,
-        errorCode: 'VALIDATION_ERROR',
-        message: 'Nama lengkap wajib diisi (minimal 2 karakter).',
+        errorCode: 'AUTH_REQUIRED',
+        message: 'Silakan masuk ke akun pelanggan terlebih dahulu.',
       };
     }
 
-    const waCheck = validateIndonesianWhatsApp(finalRawPhone);
-    if (!waCheck.valid) {
+    const nowMs = Date.now();
+    const todayStr = getWibParts(nowMs).dateStr;
+
+    if (params.tanggal < todayStr) {
       return {
         ok: false,
         errorCode: 'VALIDATION_ERROR',
-        message: waCheck.error,
+        message: 'Tidak dapat memilih tanggal yang sudah lewat.',
       };
     }
 
-    const nowMs = getEffectiveNowMs(state);
-    const todayStr = formatDateYYYYMMDD(new Date(nowMs));
+    const servicesInput: SelectedServiceInput[] =
+      params.selectedServices !== undefined
+        ? params.selectedServices
+        : [{ itemId: 'premium-haircut', qty: 1 }];
 
-    // Cek bentrok jika pelanggan sudah punya walk-in aktif hari ini pada jam yang berdekatan
-    if (customer && params.tanggal === todayStr) {
+    if (servicesInput.length === 0) {
+      return {
+        ok: false,
+        errorCode: 'VALIDATION_ERROR',
+        message: 'Pilih minimal satu layanan sebelum membuat booking.',
+      };
+    }
+
+    const activePromos = this.getActivePromos(state, nowMs);
+    const pricing = calculateServicesPricing(servicesInput, activePromos);
+    if (pricing.lines.length === 0) {
+      return {
+        ok: false,
+        errorCode: 'VALIDATION_ERROR',
+        message: 'Layanan yang dipilih tidak valid.',
+      };
+    }
+
+    const opHours = getOperationalHoursForDate(params.tanggal);
+    const validHours = generateHourSlots(opHours.buka, opHours.tutup);
+    if (!validHours.includes(params.jamSlot)) {
+      return {
+        ok: false,
+        errorCode: 'VALIDATION_ERROR',
+        message: `Jam slot harus dalam jam operasional (${opHours.label}).`,
+      };
+    }
+
+    const coveredSlots = this.getSlotSpanHours(
+      params.jamSlot,
+      pricing.slotsNeeded,
+      validHours
+    );
+    if (!coveredSlots) {
+      return {
+        ok: false,
+        errorCode: 'VALIDATION_ERROR',
+        message: `Durasi layanan (${pricing.durasiTotalMenit} menit / ${
+          pricing.slotsNeeded
+        } slot) melewati jam tutup operasional (${opHours.tutup.replace(
+          ':',
+          '.'
+        )} WIB). Silakan pilih jam mulai lebih awal.`,
+      };
+    }
+
+    const slotStartMs = parseWibEpochMs(params.tanggal, params.jamSlot);
+    if (nowMs >= slotStartMs) {
+      return {
+        ok: false,
+        errorCode: 'SLOT_TAKEN',
+        message: 'Slot jam tersebut sudah terlewat. Silakan pilih slot berikutnya.',
+      };
+    }
+
+    // Cek bentrok dengan walk-in aktif hari ini
+    if (params.tanggal === todayStr) {
+      const shopStatus = getShopOperationalStatus(nowMs);
       const activeWalkin = state.walkinQueue.find(
         (w) =>
-          w.tanggal === todayStr &&
+          (w.kunciHariOperasional || w.tanggal) ===
+            shopStatus.operationalDayKey &&
           w.customerId === customer.id &&
           (w.status === 'Waiting' || w.status === 'In-Service')
       );
       if (activeWalkin) {
-        const est = this.getQueueEstimation(state, todayStr);
+        const est = this.getQueueEstimation(state, shopStatus.operationalDayKey);
         const posIdx = est.waitingList.findIndex(
           (w) => w.id === activeWalkin.id
         );
@@ -1206,9 +1523,14 @@ class BarberLocalStorageService {
           activeWalkin.status === 'In-Service'
             ? nowMs
             : nowMs +
-              Math.max(0, posIdx) * est.rataRataDurasiMenit * 60_000;
-        const requestedSlotMs = parseSlotEpochMs(params.tanggal, params.jamSlot);
-        if (Math.abs(requestedSlotMs - estServiceMs) < 60 * 60_000) {
+              (est.sisaWaktuInServiceMenit +
+                Math.max(0, posIdx) * est.rataRataDurasiMenit) *
+                60_000;
+        const slotEndMs = slotStartMs + pricing.slotsNeeded * 60 * 60_000;
+        if (
+          estServiceMs >= slotStartMs - 60 * 60_000 &&
+          estServiceMs < slotEndMs
+        ) {
           return {
             ok: false,
             errorCode: 'SCHEDULE_CONFLICT',
@@ -1229,17 +1551,22 @@ class BarberLocalStorageService {
         ok: false,
         errorCode: 'CAPSTER_OFF',
         message:
-          'Capster tidak beroperasi pada tanggal ini. Silakan pilih capster atau tanggal lain.',
+          'Capster tidak beroperasi pada tanggal ini. Silakan pilih tanggal lain.',
       };
     }
 
-    const targetSlot = slots.find((s) => s.jam === params.jamSlot);
-    if (!targetSlot || targetSlot.status !== 'Available') {
+    const spanCheck = this.canStartSlotFitDuration(
+      slots,
+      params.jamSlot,
+      pricing.slotsNeeded
+    );
+    if (!spanCheck.ok) {
       return {
         ok: false,
         errorCode: 'SLOT_TAKEN',
         message:
-          'Maaf, slot jam tersebut baru saja terisi atau sudah tidak tersedia. Silakan pilih slot lain yang masih hijau (Available).',
+          spanCheck.reason ||
+          'Maaf, slot jam tersebut baru saja terisi atau tidak cukup untuk durasi layanan yang dipilih.',
       };
     }
 
@@ -1255,23 +1582,30 @@ class BarberLocalStorageService {
     const newBooking: DataBooking = {
       id: `bk-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       kodeTiket,
-      customerId: customer?.id,
-      nama: finalNama,
-      nomorWhatsApp: waCheck.normalized,
+      customerId: customer.id,
+      nama: customer.nama,
+      nomorWhatsApp: customer.nomorWhatsApp,
       capsterId: params.capsterId,
       tanggal: params.tanggal,
       jamSlot: params.jamSlot,
       status: 'Booked',
       alasanBatal: null,
       waktuDibuat: nowMs,
+      layananDipilih: pricing.lines,
+      durasiTotalMenit: pricing.durasiTotalMenit,
+      slotTercakup: coveredSlots,
+      subtotalHarga: pricing.subtotalHarga,
+      potonganMin: pricing.potonganMin,
+      potonganMax: pricing.potonganMax,
+      totalEstimasiMin: pricing.totalEstimasiMin,
+      totalEstimasiMax: pricing.totalEstimasiMax,
+      promoJudul: pricing.promoJudul,
     };
 
     const nextState = this.writeRaw({
       ...state,
       bookings: [...state.bookings, newBooking],
     });
-
-    this.setCustomerBookingCode(newBooking.kodeTiket);
 
     return {
       ok: true,
@@ -1290,7 +1624,7 @@ class BarberLocalStorageService {
     newJamSlot: string;
   }): ServiceResult<{ booking: DataBooking; state: BarberDatabaseState }> {
     const state = this.syncAndGetState();
-    const nowMs = getEffectiveNowMs(state);
+    const nowMs = Date.now();
     const existing = state.bookings.find((b) => b.id === params.bookingId);
 
     if (!existing || existing.customerId !== params.customerId) {
@@ -1309,7 +1643,7 @@ class BarberLocalStorageService {
       };
     }
 
-    const oldSlotMs = parseSlotEpochMs(existing.tanggal, existing.jamSlot);
+    const oldSlotMs = parseWibEpochMs(existing.tanggal, existing.jamSlot);
     if (nowMs > oldSlotMs - RESCHEDULE_MIN_LEAD_MINUTES * 60_000) {
       return {
         ok: false,
@@ -1319,10 +1653,33 @@ class BarberLocalStorageService {
       };
     }
 
+    const slotsNeeded = existing.durasiTotalMenit
+      ? Math.max(1, Math.ceil(existing.durasiTotalMenit / 60))
+      : existing.slotTercakup?.length || 1;
+
+    const opHours = getOperationalHoursForDate(params.newTanggal);
+    const validHours = generateHourSlots(opHours.buka, opHours.tutup);
+    const coveredSlots = this.getSlotSpanHours(
+      params.newJamSlot,
+      slotsNeeded,
+      validHours
+    );
+    if (!coveredSlots) {
+      return {
+        ok: false,
+        errorCode: 'VALIDATION_ERROR',
+        message: `Durasi booking (${slotsNeeded} slot) melewati jam tutup toko (${opHours.tutup.replace(
+          ':',
+          '.'
+        )} WIB).`,
+      };
+    }
+
     const { config, slots } = this.getComputedSlots(
       state,
       params.newCapsterId,
-      params.newTanggal
+      params.newTanggal,
+      existing.id
     );
     if (config.isLibur) {
       return {
@@ -1332,12 +1689,17 @@ class BarberLocalStorageService {
       };
     }
 
-    const targetSlot = slots.find((s) => s.jam === params.newJamSlot);
-    if (!targetSlot || targetSlot.status !== 'Available') {
+    const spanCheck = this.canStartSlotFitDuration(
+      slots,
+      params.newJamSlot,
+      slotsNeeded
+    );
+    if (!spanCheck.ok) {
       return {
         ok: false,
         errorCode: 'SLOT_TAKEN',
         message:
+          spanCheck.reason ||
           'Slot tujuan baru saja terisi atau tidak tersedia. Silakan pilih slot hijau lainnya.',
       };
     }
@@ -1347,6 +1709,7 @@ class BarberLocalStorageService {
       capsterId: params.newCapsterId,
       tanggal: params.newTanggal,
       jamSlot: params.newJamSlot,
+      slotTercakup: coveredSlots,
     };
 
     const nextState = this.writeRaw({
@@ -1390,6 +1753,7 @@ class BarberLocalStorageService {
               ...b,
               status: 'Canceled' as const,
               alasanBatal: 'manual' as const,
+              catatanBatal: 'Dibatalkan oleh pelanggan',
             }
           : b
       ),
@@ -1398,15 +1762,20 @@ class BarberLocalStorageService {
   }
 
   // =========================================================================
-  // UC-05: AKSI CAPSTER
+  // UC-05: AKSI KHUSUS CAPSTER (DILINDUNGI ROLE GUARD)
   // =========================================================================
 
   public callWalkin(
     walkinId: string,
-    capsterId: string
+    capsterId?: string
   ): ServiceResult<BarberDatabaseState> {
+    const auth = this.requireCapsterRole();
+    if (!auth.ok || !auth.data) {
+      return { ok: false, errorCode: auth.errorCode, message: auth.message };
+    }
+
     const state = this.syncAndGetState();
-    const nowMs = getEffectiveNowMs(state);
+    const nowMs = Date.now();
     const target = state.walkinQueue.find((w) => w.id === walkinId);
     if (!target) {
       return {
@@ -1428,7 +1797,7 @@ class BarberLocalStorageService {
         ? {
             ...w,
             status: 'In-Service' as const,
-            capsterId: capsterId || w.capsterId,
+            capsterId: capsterId || auth.data!.id,
             waktuMulai: nowMs,
           }
         : w
@@ -1445,8 +1814,13 @@ class BarberLocalStorageService {
     walkinId: string,
     overrideDurationMinutes?: number
   ): ServiceResult<BarberDatabaseState> {
+    const auth = this.requireCapsterRole();
+    if (!auth.ok) {
+      return { ok: false, errorCode: auth.errorCode, message: auth.message };
+    }
+
     const state = this.syncAndGetState();
-    const nowMs = getEffectiveNowMs(state);
+    const nowMs = Date.now();
     const target = state.walkinQueue.find((w) => w.id === walkinId);
     if (!target) {
       return {
@@ -1490,7 +1864,20 @@ class BarberLocalStorageService {
   }
 
   public cancelWalkin(walkinId: string): ServiceResult<BarberDatabaseState> {
+    const auth = this.requireCapsterRole();
+    if (!auth.ok) {
+      return { ok: false, errorCode: auth.errorCode, message: auth.message };
+    }
+
     const state = this.syncAndGetState();
+    const target = state.walkinQueue.find((w) => w.id === walkinId);
+    if (!target) {
+      return {
+        ok: false,
+        errorCode: 'NOT_FOUND',
+        message: 'Antrean tidak ditemukan.',
+      };
+    }
     const updated = state.walkinQueue.map((w) =>
       w.id === walkinId && w.status === 'Waiting'
         ? { ...w, status: 'Canceled' as const }
@@ -1503,8 +1890,13 @@ class BarberLocalStorageService {
   public startBookingService(
     bookingId: string
   ): ServiceResult<BarberDatabaseState> {
+    const auth = this.requireCapsterRole();
+    if (!auth.ok) {
+      return { ok: false, errorCode: auth.errorCode, message: auth.message };
+    }
+
     const state = this.syncAndGetState();
-    const nowMs = getEffectiveNowMs(state);
+    const nowMs = Date.now();
     const target = state.bookings.find((b) => b.id === bookingId);
     if (!target) {
       return {
@@ -1538,8 +1930,13 @@ class BarberLocalStorageService {
     bookingId: string,
     overrideDurationMinutes?: number
   ): ServiceResult<BarberDatabaseState> {
+    const auth = this.requireCapsterRole();
+    if (!auth.ok) {
+      return { ok: false, errorCode: auth.errorCode, message: auth.message };
+    }
+
     const state = this.syncAndGetState();
-    const nowMs = getEffectiveNowMs(state);
+    const nowMs = Date.now();
     const target = state.bookings.find((b) => b.id === bookingId);
     if (!target) {
       return {
@@ -1581,6 +1978,11 @@ class BarberLocalStorageService {
   public cancelBookingManual(
     bookingId: string
   ): ServiceResult<BarberDatabaseState> {
+    const auth = this.requireCapsterRole();
+    if (!auth.ok) {
+      return { ok: false, errorCode: auth.errorCode, message: auth.message };
+    }
+
     const state = this.syncAndGetState();
     const target = state.bookings.find((b) => b.id === bookingId);
     if (!target) {
@@ -1603,6 +2005,7 @@ class BarberLocalStorageService {
             ...b,
             status: 'Canceled' as const,
             alasanBatal: 'manual' as const,
+            catatanBatal: 'Dibatalkan oleh capster (terlambat > 15 menit)',
           }
         : b
     );
@@ -1611,177 +2014,529 @@ class BarberLocalStorageService {
   }
 
   public updateDailyQuota(
-    tanggal: string,
+    operationalDayKey: string,
     kuotaMaksimal: number
-  ): BarberDatabaseState {
+  ): ServiceResult<BarberDatabaseState> {
+    const auth = this.requireCapsterRole();
+    if (!auth.ok) {
+      return { ok: false, errorCode: auth.errorCode, message: auth.message };
+    }
+
     const state = this.syncAndGetState();
-    const current = this.getQuotaForDate(state, tanggal);
+    const current = this.getQuotaForOperationalDay(state, operationalDayKey);
     const safeMax = Math.max(0, Math.min(200, Math.round(kuotaMaksimal)));
-    return this.writeRaw({
+    const nextState = this.writeRaw({
       ...state,
       quotas: {
         ...state.quotas,
-        [tanggal]: {
+        [operationalDayKey]: {
           ...current,
           kuotaMaksimal: safeMax,
         },
       },
     });
+    return { ok: true, data: nextState };
   }
 
-  public updateCapsterSchedule(params: {
+  /**
+   * Capster mengatur libur/izin satu hari penuh.
+   * Jika ada booking aktif di tanggal tersebut dan forceCancelConflicts !== true,
+   * mengembalikan BOOKING_CONFLICT agar capster membatalkannya secara eksplisit.
+   */
+  public setCapsterDayOff(params: {
     capsterId: string;
     tanggal: string;
-    buka: string;
-    tutup: string;
     isLibur: boolean;
     alasanLibur?: string;
-    slotPenuhManual?: string[];
-    applyHoursAsDefault?: boolean;
-  }): BarberDatabaseState {
+    forceCancelConflicts?: boolean;
+  }): ServiceResult<BarberDatabaseState> {
+    const auth = this.requireCapsterRole();
+    if (!auth.ok) {
+      return { ok: false, errorCode: auth.errorCode, message: auth.message };
+    }
+
     const state = this.syncAndGetState();
-    const key = `${params.capsterId}_${params.tanggal}`;
+    const todayStr = getWibParts(Date.now()).dateStr;
+    if (params.tanggal < todayStr) {
+      return {
+        ok: false,
+        errorCode: 'VALIDATION_ERROR',
+        message: 'Tanggal yang sudah lewat tidak dapat diubah.',
+      };
+    }
+
+    const conflicts = params.isLibur
+      ? state.bookings.filter(
+          (b) =>
+            b.capsterId === params.capsterId &&
+            b.tanggal === params.tanggal &&
+            (b.status === 'Booked' || b.status === 'In-Service')
+        )
+      : [];
+
+    if (conflicts.length > 0 && !params.forceCancelConflicts) {
+      return {
+        ok: false,
+        errorCode: 'BOOKING_CONFLICT',
+        conflictBookings: conflicts,
+        message: `Terdapat ${conflicts.length} booking pelanggan aktif pada tanggal ini. Batalkan booking tersebut secara eksplisit sebelum menandai hari libur.`,
+      };
+    }
+
+    const conflictIds = new Set(conflicts.map((c) => c.id));
+    const nextBookings =
+      conflicts.length > 0
+        ? state.bookings.map((b) =>
+            conflictIds.has(b.id)
+              ? {
+                  ...b,
+                  status: 'Canceled' as const,
+                  alasanBatal: 'capster_tidak_tersedia' as const,
+                  catatanBatal:
+                    params.alasanLibur ||
+                    'Capster menandai libur/izin pada tanggal ini',
+                }
+              : b
+          )
+        : state.bookings;
+
     const existing = this.getScheduleConfig(
       state,
       params.capsterId,
       params.tanggal
     );
+    const key = `${params.capsterId}_${params.tanggal}`;
 
-    const updatedConfig: DataJadwalSlotCapster = {
+    const nextSchedule: DataJadwalSlotCapster = {
       ...existing,
-      jamKerja: { buka: params.buka, tutup: params.tutup },
       isLibur: params.isLibur,
       alasanLibur: params.isLibur
-        ? params.alasanLibur || 'Libur / Izin'
+        ? params.alasanLibur?.trim() || 'Libur / Izin Capster'
         : undefined,
-      slotPenuhManual: params.slotPenuhManual ?? existing.slotPenuhManual,
     };
 
-    const nextDefaultJamKerja = params.applyHoursAsDefault
-      ? {
-          ...state.defaultJamKerja,
-          [params.capsterId]: { buka: params.buka, tutup: params.tutup },
-        }
-      : state.defaultJamKerja;
-
-    return this.writeRaw({
+    const nextState = this.writeRaw({
       ...state,
+      bookings: nextBookings,
       schedules: {
         ...state.schedules,
-        [key]: updatedConfig,
+        [key]: nextSchedule,
       },
-      defaultJamKerja: nextDefaultJamKerja,
     });
+    return { ok: true, data: nextState };
   }
 
-  public toggleManualFullSlot(
-    capsterId: string,
-    tanggal: string,
-    jam: string
-  ): BarberDatabaseState {
+  /**
+   * Capster menandai slot jam secara manual:
+   * 'tersedia' (hapus override) | 'tidak_tersedia' | 'terisi_manual'
+   * Jika ada booking pelanggan di slot tersebut dan hendak ditandai tidak tersedia / terisi manual,
+   * kembalikan BOOKING_CONFLICT kecuali forceCancelConflict = true.
+   */
+  public setCapsterSlotManual(params: {
+    capsterId: string;
+    tanggal: string;
+    jam: string;
+    mode: 'tersedia' | 'tidak_tersedia' | 'terisi_manual';
+    catatan?: string;
+    forceCancelConflict?: boolean;
+  }): ServiceResult<BarberDatabaseState> {
+    const auth = this.requireCapsterRole();
+    if (!auth.ok) {
+      return { ok: false, errorCode: auth.errorCode, message: auth.message };
+    }
+
     const state = this.syncAndGetState();
-    const existing = this.getScheduleConfig(state, capsterId, tanggal);
-    const has = existing.slotPenuhManual.includes(jam);
-    const nextManual = has
-      ? existing.slotPenuhManual.filter((h) => h !== jam)
-      : [...existing.slotPenuhManual, jam];
-    return this.updateCapsterSchedule({
-      capsterId,
-      tanggal,
-      buka: existing.jamKerja.buka,
-      tutup: existing.jamKerja.tutup,
-      isLibur: existing.isLibur,
-      alasanLibur: existing.alasanLibur,
-      slotPenuhManual: nextManual,
-    });
-  }
+    const todayStr = getWibParts(Date.now()).dateStr;
+    if (params.tanggal < todayStr) {
+      return {
+        ok: false,
+        errorCode: 'VALIDATION_ERROR',
+        message: 'Tanggal yang sudah lewat tidak dapat diubah.',
+      };
+    }
 
-  // Kontrol Simulasi Waktu Demo
-  public advanceSimulatedMinutes(minutes: number): BarberDatabaseState {
-    const state = this.readRaw();
-    const updated = this.writeRaw({
+    const activeBooking = state.bookings.find(
+      (b) =>
+        b.capsterId === params.capsterId &&
+        b.tanggal === params.tanggal &&
+        (b.status === 'Booked' || b.status === 'In-Service') &&
+        this.getBookingCoveredSlots(b).includes(params.jam)
+    );
+
+    if (
+      activeBooking &&
+      params.mode !== 'tersedia' &&
+      !params.forceCancelConflict
+    ) {
+      return {
+        ok: false,
+        errorCode: 'BOOKING_CONFLICT',
+        conflictBookings: [activeBooking],
+        message: `Slot ${params.jam} WIB sudah dibooking oleh ${activeBooking.nama} (${activeBooking.kodeTiket}). Konfirmasi pembatalan booking ini sebelum mengubah status slot.`,
+      };
+    }
+
+    const nextBookings =
+      activeBooking && params.forceCancelConflict
+        ? state.bookings.map((b) =>
+            b.id === activeBooking.id
+              ? {
+                  ...b,
+                  status: 'Canceled' as const,
+                  alasanBatal: 'capster_tidak_tersedia' as const,
+                  catatanBatal:
+                    params.mode === 'tidak_tersedia'
+                      ? params.catatan || 'Slot ditandai tidak tersedia oleh capster'
+                      : 'Slot dialihkan oleh capster',
+                }
+              : b
+          )
+        : state.bookings;
+
+    const existing = this.getScheduleConfig(
+      state,
+      params.capsterId,
+      params.tanggal
+    );
+    const key = `${params.capsterId}_${params.tanggal}`;
+    const nextManualSlots: Record<string, ManualSlotEntry> = {
+      ...existing.manualSlots,
+    };
+
+    if (params.mode === 'tersedia') {
+      delete nextManualSlots[params.jam];
+    } else {
+      nextManualSlots[params.jam] = {
+        tipe: params.mode,
+        catatan: params.catatan?.trim() || undefined,
+      };
+    }
+
+    const nextState = this.writeRaw({
       ...state,
-      extraOffsetMinutes: state.extraOffsetMinutes + minutes,
+      bookings: nextBookings,
+      schedules: {
+        ...state.schedules,
+        [key]: {
+          ...existing,
+          manualSlots: nextManualSlots,
+        },
+      },
     });
-    return this.syncAndGetState() || updated;
+    return { ok: true, data: nextState };
   }
 
-  public toggleUseRealClock(useReal: boolean): BarberDatabaseState {
-    const state = this.readRaw();
-    const updated = this.writeRaw({
+  // =========================================================================
+  // MANAJEMEN PROMO (PELANGGAN READ-ONLY, MUTASI KHUSUS CAPSTER)
+  // =========================================================================
+
+  public getActivePromos(
+    state?: BarberDatabaseState,
+    nowMs: number = Date.now()
+  ): Promo[] {
+    const current = state || this.readRaw();
+    return (current.promos || []).filter((p) => isPromoActiveNow(p, nowMs));
+  }
+
+  private validatePromoPayload(params: {
+    judul: string;
+    deskripsi: string;
+    layananId: string[];
+    diskonMin: number;
+    diskonMax: number;
+    berlakuDari?: string;
+    berlakuSampai?: string;
+  }): ServiceResult<{
+    judul: string;
+    deskripsi: string;
+    layananId: string[];
+    diskonMin: number;
+    diskonMax: number;
+    berlakuDari?: string;
+    berlakuSampai?: string;
+  }> {
+    const judul = params.judul.trim();
+    if (judul.length < 3) {
+      return {
+        ok: false,
+        errorCode: 'VALIDATION_ERROR',
+        message: 'Judul promo wajib diisi minimal 3 karakter.',
+      };
+    }
+
+    const validIds = Array.from(
+      new Set(params.layananId.filter((id) => Boolean(findServiceItemById(id))))
+    );
+    if (validIds.length === 0) {
+      return {
+        ok: false,
+        errorCode: 'VALIDATION_ERROR',
+        message: 'Pilih minimal satu layanan yang mendapat promo.',
+      };
+    }
+
+    const minVal = Math.round(Number(params.diskonMin));
+    const maxVal = Math.round(Number(params.diskonMax));
+    if (
+      Number.isNaN(minVal) ||
+      Number.isNaN(maxVal) ||
+      minVal < 0 ||
+      maxVal > 100 ||
+      minVal > maxVal
+    ) {
+      return {
+        ok: false,
+        errorCode: 'VALIDATION_ERROR',
+        message:
+          'Persentase diskon harus berada di antara 0–100% dan diskon minimal tidak boleh melebihi diskon maksimal.',
+      };
+    }
+
+    const dari = params.berlakuDari?.trim() || undefined;
+    const sampai = params.berlakuSampai?.trim() || undefined;
+    if (dari && sampai && dari > sampai) {
+      return {
+        ok: false,
+        errorCode: 'VALIDATION_ERROR',
+        message:
+          'Tanggal mulai promo tidak boleh lebih akhir dari tanggal berakhir.',
+      };
+    }
+
+    return {
+      ok: true,
+      data: {
+        judul,
+        deskripsi: params.deskripsi.trim(),
+        layananId: validIds,
+        diskonMin: minVal,
+        diskonMax: maxVal,
+        berlakuDari: dari,
+        berlakuSampai: sampai,
+      },
+    };
+  }
+
+  public createPromo(params: {
+    judul: string;
+    deskripsi: string;
+    layananId: string[];
+    diskonMin: number;
+    diskonMax: number;
+    aktif: boolean;
+    berlakuDari?: string;
+    berlakuSampai?: string;
+  }): ServiceResult<BarberDatabaseState> {
+    const auth = this.requireCapsterRole();
+    if (!auth.ok || !auth.data) {
+      return { ok: false, errorCode: auth.errorCode, message: auth.message };
+    }
+
+    const valid = this.validatePromoPayload(params);
+    if (!valid.ok || !valid.data) {
+      return { ok: false, errorCode: valid.errorCode, message: valid.message };
+    }
+
+    const state = this.syncAndGetState();
+    const newPromo: Promo = {
+      id: `promo-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      ...valid.data,
+      aktif: Boolean(params.aktif),
+      diperbaruiOleh: auth.data.nama,
+      diperbaruiPada: Date.now(),
+    };
+
+    const nextState = this.writeRaw({
       ...state,
-      useRealClock: useReal,
-      extraOffsetMinutes: 0,
+      promos: [newPromo, ...(state.promos || [])],
     });
-    return this.syncAndGetState() || updated;
+    return { ok: true, data: nextState };
   }
 
-  public resetDemoData(): BarberDatabaseState {
-    const seed = createSeedData();
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(seed));
-      window.localStorage.removeItem(CUSTOMER_SESSION_ID_KEY);
-      window.localStorage.removeItem(CUSTOMER_WALKIN_ID_KEY);
-      window.localStorage.removeItem(CUSTOMER_BOOKING_CODE_KEY);
+  public updatePromo(
+    promoId: string,
+    params: {
+      judul: string;
+      deskripsi: string;
+      layananId: string[];
+      diskonMin: number;
+      diskonMax: number;
+      aktif: boolean;
+      berlakuDari?: string;
+      berlakuSampai?: string;
     }
-    return seed;
-  }
-
-  // Session & Active Ticket Helpers
-  public getCustomerSessionId(): string | null {
-    if (typeof window === 'undefined') return null;
-    return window.localStorage.getItem(CUSTOMER_SESSION_ID_KEY);
-  }
-
-  public setCustomerSessionId(id: string | null): void {
-    if (typeof window === 'undefined') return;
-    if (id) {
-      window.localStorage.setItem(CUSTOMER_SESSION_ID_KEY, id);
-    } else {
-      window.localStorage.removeItem(CUSTOMER_SESSION_ID_KEY);
+  ): ServiceResult<BarberDatabaseState> {
+    const auth = this.requireCapsterRole();
+    if (!auth.ok || !auth.data) {
+      return { ok: false, errorCode: auth.errorCode, message: auth.message };
     }
-  }
 
-  public getCustomerWalkinId(): string | null {
-    if (typeof window === 'undefined') return null;
-    return window.localStorage.getItem(CUSTOMER_WALKIN_ID_KEY);
-  }
-
-  public setCustomerWalkinId(id: string | null): void {
-    if (typeof window === 'undefined') return;
-    if (id) {
-      window.localStorage.setItem(CUSTOMER_WALKIN_ID_KEY, id);
-    } else {
-      window.localStorage.removeItem(CUSTOMER_WALKIN_ID_KEY);
+    const valid = this.validatePromoPayload(params);
+    if (!valid.ok || !valid.data) {
+      return { ok: false, errorCode: valid.errorCode, message: valid.message };
     }
-  }
 
-  public getCustomerBookingCode(): string | null {
-    if (typeof window === 'undefined') return null;
-    return window.localStorage.getItem(CUSTOMER_BOOKING_CODE_KEY);
-  }
-
-  public setCustomerBookingCode(code: string | null): void {
-    if (typeof window === 'undefined') return;
-    if (code) {
-      window.localStorage.setItem(CUSTOMER_BOOKING_CODE_KEY, code);
-    } else {
-      window.localStorage.removeItem(CUSTOMER_BOOKING_CODE_KEY);
+    const state = this.syncAndGetState();
+    const exists = (state.promos || []).some((p) => p.id === promoId);
+    if (!exists) {
+      return {
+        ok: false,
+        errorCode: 'NOT_FOUND',
+        message: 'Promo tidak ditemukan.',
+      };
     }
+
+    const nextPromos = (state.promos || []).map((p) =>
+      p.id === promoId
+        ? {
+            ...p,
+            ...valid.data!,
+            aktif: Boolean(params.aktif),
+            diperbaruiOleh: auth.data!.nama,
+            diperbaruiPada: Date.now(),
+          }
+        : p
+    );
+
+    const nextState = this.writeRaw({
+      ...state,
+      promos: nextPromos,
+    });
+    return { ok: true, data: nextState };
   }
 
-  public getCapsterSession(): string | null {
-    if (typeof window === 'undefined') return null;
-    return window.localStorage.getItem(CAPSTER_SESSION_KEY);
-  }
-
-  public setCapsterSession(capsterId: string | null): void {
-    if (typeof window === 'undefined') return;
-    if (capsterId) {
-      window.localStorage.setItem(CAPSTER_SESSION_KEY, capsterId);
-    } else {
-      window.localStorage.removeItem(CAPSTER_SESSION_KEY);
+  public togglePromoActive(
+    promoId: string
+  ): ServiceResult<BarberDatabaseState> {
+    const auth = this.requireCapsterRole();
+    if (!auth.ok || !auth.data) {
+      return { ok: false, errorCode: auth.errorCode, message: auth.message };
     }
+
+    const state = this.syncAndGetState();
+    const exists = (state.promos || []).some((p) => p.id === promoId);
+    if (!exists) {
+      return {
+        ok: false,
+        errorCode: 'NOT_FOUND',
+        message: 'Promo tidak ditemukan.',
+      };
+    }
+
+    const nextPromos = (state.promos || []).map((p) =>
+      p.id === promoId
+        ? {
+            ...p,
+            aktif: !p.aktif,
+            diperbaruiOleh: auth.data!.nama,
+            diperbaruiPada: Date.now(),
+          }
+        : p
+    );
+
+    const nextState = this.writeRaw({
+      ...state,
+      promos: nextPromos,
+    });
+    return { ok: true, data: nextState };
+  }
+
+  public deletePromo(promoId: string): ServiceResult<BarberDatabaseState> {
+    const auth = this.requireCapsterRole();
+    if (!auth.ok) {
+      return { ok: false, errorCode: auth.errorCode, message: auth.message };
+    }
+
+    const state = this.syncAndGetState();
+    const exists = (state.promos || []).some((p) => p.id === promoId);
+    if (!exists) {
+      return {
+        ok: false,
+        errorCode: 'NOT_FOUND',
+        message: 'Promo tidak ditemukan.',
+      };
+    }
+
+    const nextState = this.writeRaw({
+      ...state,
+      promos: (state.promos || []).filter((p) => p.id !== promoId),
+    });
+    return { ok: true, data: nextState };
+  }
+
+  // =========================================================================
+  // PROFIL & ABOUT CAPSTER (KHUSUS CAPSTER)
+  // =========================================================================
+
+  public updateCapsterProfile(params: {
+    pengalaman: string;
+    nomorWhatsApp: string;
+    instagramCapster: string;
+    instagramBarbershop: string;
+  }): ServiceResult<BarberDatabaseState> {
+    const auth = this.requireCapsterRole();
+    if (!auth.ok || !auth.data) {
+      return { ok: false, errorCode: auth.errorCode, message: auth.message };
+    }
+
+    const pengalamanTrim = params.pengalaman.trim();
+    if (pengalamanTrim.length < 5) {
+      return {
+        ok: false,
+        errorCode: 'VALIDATION_ERROR',
+        message: 'Teks pengalaman capster wajib diisi minimal 5 karakter.',
+      };
+    }
+
+    const waCheck = validateIndonesianWhatsApp(params.nomorWhatsApp);
+    if (!waCheck.valid) {
+      return {
+        ok: false,
+        errorCode: 'VALIDATION_ERROR',
+        message: waCheck.error,
+      };
+    }
+
+    const igCapsterCheck = validateInstagramHandle(
+      params.instagramCapster,
+      'Instagram Capster'
+    );
+    if (!igCapsterCheck.valid) {
+      return {
+        ok: false,
+        errorCode: 'VALIDATION_ERROR',
+        message: igCapsterCheck.error,
+      };
+    }
+
+    const igShopCheck = validateInstagramHandle(
+      params.instagramBarbershop,
+      'Instagram Barbershop'
+    );
+    if (!igShopCheck.valid) {
+      return {
+        ok: false,
+        errorCode: 'VALIDATION_ERROR',
+        message: igShopCheck.error,
+      };
+    }
+
+    const state = this.syncAndGetState();
+    const nextProfile: CapsterProfile = {
+      ...getInitialCapsterProfile(),
+      ...(state.capsterProfile || {}),
+      pengalaman: pengalamanTrim,
+      nomorWhatsApp: normalizeWaToLocal08(waCheck.normalized),
+      instagramCapster: igCapsterCheck.cleaned,
+      instagramBarbershop: igShopCheck.cleaned,
+      diperbaruiPada: Date.now(),
+    };
+
+    const nextState = this.writeRaw({
+      ...state,
+      capsterProfile: nextProfile,
+    });
+    return { ok: true, data: nextState };
   }
 }
 

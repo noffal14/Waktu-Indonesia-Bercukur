@@ -34,7 +34,7 @@ export function ProfileView({
   const [nama, setNama] = useState(currentCustomer.nama);
   const [email, setEmail] = useState(currentCustomer.email || '');
   const [capsterFavoritId, setCapsterFavoritId] = useState(
-    currentCustomer.capsterFavoritId || ''
+    currentCustomer.capsterFavoritId || capsters[0]?.id || 'hasan'
   );
 
   const [currentPassword, setCurrentPassword] = useState('');

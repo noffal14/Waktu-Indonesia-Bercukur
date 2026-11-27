@@ -7,6 +7,7 @@ import {
   CalendarCheck,
   CheckCircle2,
   Clock,
+  Lock,
   Ticket,
   User,
   Users,
@@ -14,9 +15,10 @@ import {
 import {
   addDaysYYYYMMDD,
   formatDateIndo,
-  formatTimeHHMM,
+  formatTimeWibHHMM,
   formatWhatsAppDisplay,
 } from '@/lib/barber-service';
+import { ShopOperationalStatus } from '@/lib/barbershop-config';
 import {
   AppView,
   BarberDatabaseState,
@@ -31,6 +33,8 @@ import { StatusIndicator } from './StatusIndicator';
 interface WalkinViewProps {
   dbState: BarberDatabaseState;
   todayStr: string;
+  operationalDayKey: string;
+  shopStatus: ShopOperationalStatus;
   todayQuota: DataKuotaAntrean;
   queueEstimation: QueueEstimationSummary;
   currentCustomer: Customer;
@@ -38,8 +42,6 @@ interface WalkinViewProps {
   isOffline: boolean;
   onTakeWalkin: (params: {
     customerId?: string;
-    namaPelanggan?: string;
-    nomorWhatsApp?: string;
     capsterId?: string;
   }) => ServiceResult<{
     ticket: DataAntreanWalkin;
@@ -54,6 +56,8 @@ interface WalkinViewProps {
 export function WalkinView({
   dbState,
   todayStr,
+  operationalDayKey,
+  shopStatus,
   todayQuota,
   queueEstimation,
   currentCustomer,
@@ -63,9 +67,13 @@ export function WalkinView({
   onNavigate,
   onBookTomorrow,
 }: WalkinViewProps) {
-  const [capsterId, setCapsterId] = useState(
-    currentCustomer.capsterFavoritId || ''
-  );
+  const defaultCapsterId =
+    dbState.capsters.find((c) => c.id === currentCustomer.capsterFavoritId)
+      ?.id ||
+    dbState.capsters[0]?.id ||
+    'hasan';
+
+  const [capsterId, setCapsterId] = useState(defaultCapsterId);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [justIssued, setJustIssued] = useState<DataAntreanWalkin | null>(null);
 
@@ -76,11 +84,10 @@ export function WalkinView({
   const isQuotaFull = sisaKuota <= 0;
   const tomorrowStr = addDaysYYYYMMDD(todayStr, 1);
 
-  // Cek apakah pelanggan sudah punya walk-in aktif hari ini (Waiting / In-Service)
   const existingActiveWalkin =
     dbState.walkinQueue.find(
       (w) =>
-        w.tanggal === todayStr &&
+        (w.kunciHariOperasional || w.tanggal) === operationalDayKey &&
         w.customerId === currentCustomer.id &&
         (w.status === 'Waiting' || w.status === 'In-Service')
     ) || null;
@@ -89,7 +96,8 @@ export function WalkinView({
     justIssued ||
     existingActiveWalkin ||
     (activeCustomerWalkin &&
-    activeCustomerWalkin.tanggal === todayStr &&
+    (activeCustomerWalkin.kunciHariOperasional ||
+      activeCustomerWalkin.tanggal) === operationalDayKey &&
     activeCustomerWalkin.customerId === currentCustomer.id &&
     (activeCustomerWalkin.status === 'Waiting' ||
       activeCustomerWalkin.status === 'In-Service')
@@ -101,9 +109,7 @@ export function WalkinView({
     setErrorMsg(null);
     const res = onTakeWalkin({
       customerId: currentCustomer.id,
-      namaPelanggan: currentCustomer.nama,
-      nomorWhatsApp: currentCustomer.nomorWhatsApp,
-      capsterId: capsterId || undefined,
+      capsterId: capsterId || defaultCapsterId,
     });
     if (!res.ok || !res.data) {
       setErrorMsg(
@@ -127,7 +133,12 @@ export function WalkinView({
         )
       : 0;
   const estimasiMenit =
+    queueEstimation.sisaWaktuInServiceMenit +
     antreanDiDepan * queueEstimation.rataRataDurasiMenit;
+
+  const previewWaitMinutes =
+    queueEstimation.sisaWaktuInServiceMenit +
+    queueEstimation.waitingList.length * queueEstimation.rataRataDurasiMenit;
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -136,30 +147,36 @@ export function WalkinView({
           Ambil Nomor Antrean Walk-in
         </h1>
         <p className="text-sm text-zinc-400">
-          {formatDateIndo(todayStr)} · Identitas diisi otomatis dari akun Anda.
-          Maksimal 1 antrean aktif per hari.
+          {formatDateIndo(todayStr)} · Jam operasional hari ini:{' '}
+          <span className="font-mono text-zinc-200">
+            {shopStatus.hours.label}
+          </span>
+          . Maksimal 1 antrean aktif per hari.
         </p>
       </div>
 
       {/* Ringkasan Kuota & Estimasi Hari Ini */}
-      <div className="grid grid-cols-3 gap-3">
-        <div className="p-4 rounded-xl bg-[#131317] border border-zinc-800/90">
-          <p className="text-xs text-zinc-400">Sisa Kuota</p>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="p-4 rounded-xl bg-[var(--wib-surface)] border border-zinc-800/90">
+          <p className="text-xs text-zinc-400">Sisa kuota walk-in</p>
           <p
-            className={`font-mono tabular-nums text-xl sm:text-2xl font-bold mt-1 ${
+            className={`font-mono tabular-nums text-lg sm:text-xl font-bold mt-1 ${
               isQuotaFull ? 'text-rose-400' : 'text-emerald-400'
             }`}
           >
-            {sisaKuota} / {todayQuota.kuotaMaksimal}
+            {sisaKuota} dari {todayQuota.kuotaMaksimal}
+          </p>
+          <p className="text-[11px] text-zinc-400 mt-1">
+            Sisa kuota walk-in: {sisaKuota} dari {todayQuota.kuotaMaksimal}
           </p>
         </div>
-        <div className="p-4 rounded-xl bg-[#131317] border border-zinc-800/90">
+        <div className="p-4 rounded-xl bg-[var(--wib-surface)] border border-zinc-800/90">
           <p className="text-xs text-zinc-400">Antrean Menunggu</p>
           <p className="font-mono tabular-nums text-xl sm:text-2xl font-bold text-amber-300 mt-1">
             {queueEstimation.waitingList.length} org
           </p>
         </div>
-        <div className="p-4 rounded-xl bg-[#131317] border border-zinc-800/90">
+        <div className="p-4 rounded-xl bg-[var(--wib-surface)] border border-zinc-800/90">
           <p className="text-xs text-zinc-400">Rata-rata Cukur</p>
           <p className="font-mono tabular-nums text-xl sm:text-2xl font-bold text-stone-100 mt-1">
             {queueEstimation.rataRataDurasiMenit} mnt
@@ -167,8 +184,50 @@ export function WalkinView({
         </div>
       </div>
 
+      {/* Di Luar Jam Operasional */}
+      {!shopStatus.isOpen && !liveTicket && (
+        <div className="p-6 sm:p-8 rounded-2xl bg-zinc-900/80 border border-zinc-700 space-y-5">
+          <div className="flex items-start gap-3.5">
+            <Lock className="w-6 h-6 text-amber-400 shrink-0 mt-0.5" />
+            <div className="space-y-1.5">
+              <h2 className="font-display text-xl font-bold text-stone-100">
+                {shopStatus.closedMessage}
+              </h2>
+              <p className="text-sm text-zinc-300 leading-relaxed">
+                {shopStatus.isBeforeOpen
+                  ? `Pengambilan nomor antrean walk-in dibuka mulai pukul ${shopStatus.hours.buka.replace(
+                      ':',
+                      '.'
+                    )} WIB sekaligus mereset kuota harian menjadi ${
+                      todayQuota.kuotaMaksimal
+                    }. Sambil menunggu, Anda dapat memesan jadwal capster lewat menu Booking.`
+                  : 'Pengambilan nomor antrean walk-in hanya tersedia selama jam operasional berlangsung. Anda tetap dapat melakukan booking jadwal untuk hari berikutnya.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button
+              type="button"
+              onClick={() => onBookTomorrow(tomorrowStr)}
+              className="min-h-[48px] px-5 py-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 font-semibold text-sm flex items-center justify-center gap-2 transition-colors"
+            >
+              <CalendarCheck className="w-4 h-4" />
+              <span>Booking untuk Hari Berikutnya</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigate('jadwal')}
+              className="min-h-[48px] px-5 py-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-stone-100 border border-zinc-700 font-medium text-sm flex items-center justify-center gap-2 transition-colors"
+            >
+              <span>Cek Jadwal Capster</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Kondisi Kuota Penuh */}
-      {isQuotaFull && !liveTicket && (
+      {shopStatus.isOpen && isQuotaFull && !liveTicket && (
         <div className="p-6 sm:p-8 rounded-2xl bg-rose-950/30 border border-rose-500/40 space-y-5">
           <div className="flex items-start gap-3.5">
             <AlertTriangle className="w-6 h-6 text-rose-400 shrink-0 mt-0.5" />
@@ -179,8 +238,8 @@ export function WalkinView({
               <p className="text-sm text-rose-100/80 leading-relaxed">
                 Kuota antrean walk-in hari ini ({todayQuota.kuotaMaksimal}{' '}
                 pelanggan) sudah terpenuhi agar area tunggu tetap nyaman. Anda
-                dapat memesan jadwal untuk besok agar langsung dilayani tanpa
-                menunggu.
+                dapat memesan jadwal untuk hari berikutnya agar langsung
+                dilayani tanpa menunggu.
               </p>
             </div>
           </div>
@@ -228,7 +287,7 @@ export function WalkinView({
                 <p className="text-xs text-zinc-400">
                   Diambil pukul{' '}
                   <span className="font-mono tabular-nums text-zinc-200">
-                    {formatTimeHHMM(liveTicket.waktuAmbil)} WIB
+                    {formatTimeWibHHMM(liveTicket.waktuAmbil)} WIB
                   </span>
                 </p>
               </div>
@@ -266,9 +325,10 @@ export function WalkinView({
             <div className="p-4 rounded-xl bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-300 flex items-start gap-2.5">
               <Clock className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
               <span>
-                Anda sudah memiliki antrean aktif hari ini. Pantau perubahan
-                posisi dan estimasi langsung dari halaman Antrean Saya atau
-                Status Live.
+                Estimasi tunggu dihitung dari sisa waktu pelanggan yang sedang
+                dilayani ({queueEstimation.sisaWaktuInServiceMenit} mnt) + (
+                {antreanDiDepan} antrean di depan ×{' '}
+                {queueEstimation.rataRataDurasiMenit} mnt).
               </span>
             </div>
 
@@ -278,7 +338,7 @@ export function WalkinView({
                 onClick={() => onNavigate('antrean-saya')}
                 className="flex-1 min-h-[48px] px-5 py-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 font-semibold text-sm flex items-center justify-center gap-2 transition-colors"
               >
-                <span>Buka Antrean & Jadwal Saya</span>
+                <span>Buka Antrean &amp; Jadwal Saya</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
 
@@ -294,23 +354,32 @@ export function WalkinView({
         </div>
       )}
 
-      {/* Form Pengambilan Antrean tanpa input identitas manual */}
-      {!isQuotaFull && !liveTicket && (
+      {/* Form Pengambilan Antrean Walk-in */}
+      {shopStatus.isOpen && !isQuotaFull && !liveTicket && (
         <form
           onSubmit={handleSubmit}
           className="p-6 sm:p-8 rounded-2xl bg-[#131317] border border-zinc-800/90 space-y-5"
         >
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-1">
-              <h2 className="font-display text-lg font-semibold text-stone-100">
-                Konfirmasi Antrean Walk-in
-              </h2>
-              <p className="text-xs sm:text-sm text-zinc-400">
-                Identitas Anda diambil otomatis dari akun pelanggan yang sedang
-                masuk.
-              </p>
-            </div>
+          <div className="space-y-1">
+            <h2 className="font-display text-lg font-semibold text-stone-100">
+              Konfirmasi Antrean Walk-in
+            </h2>
+            <p className="text-xs sm:text-sm text-zinc-400">
+              Identitas Anda diambil otomatis dari akun pelanggan yang sedang
+              masuk.
+            </p>
           </div>
+
+          {shopStatus.isNearClosing && (
+            <div className="p-3.5 rounded-xl bg-amber-500/12 border border-amber-500/40 text-xs sm:text-sm text-amber-200 flex items-start gap-2.5">
+              <Clock className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <span>
+                Perhatian: Barbershop mendekati jam tutup (tersisa{' '}
+                <strong>{shopStatus.minutesUntilClose} menit</strong> sebelum
+                pukul {shopStatus.hours.tutup.replace(':', '.')} WIB).
+              </span>
+            </div>
+          )}
 
           {errorMsg && (
             <div className="p-3.5 rounded-xl bg-rose-950/50 border border-rose-500/40 text-sm text-rose-200 space-y-2">
@@ -320,7 +389,7 @@ export function WalkinView({
                 onClick={() => onNavigate('antrean-saya')}
                 className="text-xs font-semibold text-amber-300 hover:text-amber-200"
               >
-                Lihat Antrean & Jadwal Saya →
+                Lihat Antrean &amp; Jadwal Saya →
               </button>
             </div>
           )}
@@ -332,7 +401,7 @@ export function WalkinView({
             </div>
           )}
 
-          {/* Ringkasan Identitas Akun (Read-only) */}
+          {/* Ringkasan Identitas Akun */}
           <div className="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center shrink-0">
@@ -361,8 +430,7 @@ export function WalkinView({
               htmlFor="walkin-capster"
               className="block text-sm font-medium text-stone-200 mb-1.5"
             >
-              Preferensi Capster{' '}
-              <span className="text-zinc-400 font-normal">(opsional)</span>
+              Capster Bertugas
             </label>
             <select
               id="walkin-capster"
@@ -370,7 +438,6 @@ export function WalkinView({
               onChange={(e) => setCapsterId(e.target.value)}
               className="w-full min-h-[48px] px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-stone-100 text-sm focus:outline-none focus:border-amber-400"
             >
-              <option value="">Siapa saja yang kosong lebih dulu</option>
               {dbState.capsters.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.nama} ({c.gelar})
@@ -385,9 +452,9 @@ export function WalkinView({
               <span>Estimasi tunggu jika ambil sekarang:</span>
             </div>
             <span className="font-mono tabular-nums font-bold text-amber-300 whitespace-nowrap">
-              {queueEstimation.waitingList.length *
-                queueEstimation.rataRataDurasiMenit}{' '}
-              menit
+              {previewWaitMinutes === 0
+                ? 'Langsung dilayani'
+                : `± ${previewWaitMinutes} menit`}
             </span>
           </div>
 

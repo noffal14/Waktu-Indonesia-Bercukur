@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { CalendarOff, CheckCircle2, Clock, Lock } from 'lucide-react';
+import { Ban, CalendarOff, CheckCircle2, Clock, Lock } from 'lucide-react';
 import {
   addDaysYYYYMMDD,
   barberService,
@@ -34,9 +34,12 @@ export function ScheduleView({
   );
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
 
+  // Hanya tanggal hari ini & 6 hari ke depan (tidak bisa memilih tanggal lampau)
   const dateOptions = Array.from({ length: 7 }, (_, i) =>
     addDaysYYYYMMDD(todayStr, i)
   );
+  const effectiveDate =
+    selectedDate >= todayStr ? selectedDate : todayStr;
 
   const selectedCapster =
     dbState.capsters.find((c) => c.id === selectedCapsterId) ||
@@ -45,12 +48,14 @@ export function ScheduleView({
   const { config, slots } = barberService.getComputedSlots(
     dbState,
     selectedCapster.id,
-    selectedDate
+    effectiveDate
   );
 
   const availableCount = slots.filter((s) => s.status === 'Available').length;
   const bookedCount = slots.filter((s) => s.status === 'Booked').length;
-  const fullCount = slots.filter((s) => s.status === 'Full').length;
+  const unavailableCount = slots.filter(
+    (s) => s.status === 'Full' || s.status === 'Tidak Tersedia'
+  ).length;
 
   const getSlotStyle = (slot: ComputedSlotInfo) => {
     if (slot.status === 'Available') {
@@ -58,6 +63,9 @@ export function ScheduleView({
     }
     if (slot.status === 'Booked') {
       return 'bg-rose-500/10 border-rose-500/35 text-rose-300 cursor-not-allowed';
+    }
+    if (slot.status === 'Tidak Tersedia') {
+      return 'bg-zinc-900/90 border-zinc-700/80 text-zinc-400 cursor-not-allowed';
     }
     return 'bg-red-500/15 border-red-500/40 text-red-300 cursor-not-allowed';
   };
@@ -69,15 +77,21 @@ export function ScheduleView({
           Cek Jadwal Capster
         </h1>
         <p className="text-sm text-zinc-400">
-          Pilih capster dan tanggal untuk melihat slot jam kerja yang masih
-          kosong. Klik slot hijau (Available) untuk langsung booking.
+          Lihat ketersediaan slot jam kerja yang masih kosong. Klik slot hijau
+          (Available) untuk langsung membuat booking.
         </p>
       </div>
 
       {/* Pilihan Capster */}
       <section className="space-y-3">
-        <h2 className="text-sm font-medium text-zinc-300">1. Pilih Capster</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <h2 className="text-sm font-medium text-zinc-300">1. Capster</h2>
+        <div
+          className={`grid gap-3 ${
+            dbState.capsters.length === 1
+              ? 'grid-cols-1 max-w-md'
+              : 'grid-cols-1 sm:grid-cols-3'
+          }`}
+        >
           {dbState.capsters.map((c) => {
             const active = c.id === selectedCapster.id;
             return (
@@ -94,7 +108,7 @@ export function ScheduleView({
                 <CapsterAvatar
                   fotoKey={c.fotoKey}
                   nama={c.nama}
-                  sizeClass="w-12 h-12"
+                  widthClass="w-12"
                 />
                 <div className="min-w-0">
                   <p className="font-display font-semibold text-base text-stone-100">
@@ -113,7 +127,7 @@ export function ScheduleView({
         <h2 className="text-sm font-medium text-zinc-300">2. Pilih Tanggal</h2>
         <div className="flex gap-2 overflow-x-auto pb-2">
           {dateOptions.map((dt, idx) => {
-            const active = dt === selectedDate;
+            const active = dt === effectiveDate;
             return (
               <button
                 key={dt}
@@ -141,11 +155,11 @@ export function ScheduleView({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-800 pb-4">
           <div>
             <h2 className="font-display text-lg font-semibold text-stone-100">
-              Jadwal {selectedCapster.nama} · {formatDateIndo(selectedDate)}
+              Jadwal {selectedCapster.nama} · {formatDateIndo(effectiveDate)}
             </h2>
             <p className="text-xs text-zinc-400 mt-0.5 font-mono tabular-nums">
-              Jam kerja: {config.jamKerja.buka} – {config.jamKerja.tutup} WIB
-              (slot per 1 jam)
+              Jam operasional: {config.jamKerja.buka.replace(':', '.')} –{' '}
+              {config.jamKerja.tutup.replace(':', '.')} WIB (slot per 1 jam)
             </p>
           </div>
 
@@ -159,15 +173,15 @@ export function ScheduleView({
               <span className="text-zinc-400 font-mono tabular-nums">
                 {bookedCount}
               </span>
-              <StatusIndicator status="Full" compact />
+              <StatusIndicator status="Tidak Tersedia" compact />
               <span className="text-zinc-400 font-mono tabular-nums">
-                {fullCount}
+                {unavailableCount}
               </span>
             </div>
           )}
         </div>
 
-        {/* Alternative Flow: Capster Libur / Izin */}
+        {/* Capster Libur / Izin */}
         {config.isLibur ? (
           <div className="p-8 rounded-xl bg-zinc-900/70 border border-rose-500/30 text-center space-y-3">
             <CalendarOff className="w-10 h-10 text-rose-400 mx-auto" />
@@ -176,9 +190,9 @@ export function ScheduleView({
                 Capster tidak beroperasi pada tanggal ini
               </h3>
               <p className="text-sm text-zinc-400">
-                {selectedCapster.nama} sedang libur/izin (
-                {config.alasanLibur || 'Jadwal tidak aktif'}). Silakan pilih
-                capster lain atau tanggal berbeda.
+                {selectedCapster.nama} sedang tidak beroperasi (
+                {config.alasanLibur || 'Libur / Izin'}). Silakan pilih tanggal
+                lainnya.
               </p>
             </div>
           </div>
@@ -197,7 +211,7 @@ export function ScheduleView({
                   if (slot.status === 'Available') {
                     onSelectSlotToBook({
                       capsterId: selectedCapster.id,
-                      tanggal: selectedDate,
+                      tanggal: effectiveDate,
                       jamSlot: slot.jam,
                     });
                   }
@@ -212,6 +226,8 @@ export function ScheduleView({
                   </span>
                   {slot.status === 'Available' ? (
                     <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  ) : slot.status === 'Tidak Tersedia' ? (
+                    <Ban className="w-4 h-4 shrink-0" />
                   ) : (
                     <Lock className="w-4 h-4 shrink-0" />
                   )}
@@ -223,10 +239,12 @@ export function ScheduleView({
                     {slot.status === 'Available'
                       ? 'Klik untuk booking'
                       : slot.status === 'Booked'
-                        ? 'Sudah dibooking'
-                        : slot.sudahLewat
-                          ? 'Slot sudah lewat'
-                          : 'Slot penuh'}
+                        ? 'Sudah terisi'
+                        : slot.status === 'Tidak Tersedia'
+                          ? 'Istirahat / izin'
+                          : slot.sudahLewat
+                            ? 'Slot sudah lewat'
+                            : 'Slot penuh'}
                   </p>
                 </div>
               </button>
@@ -237,8 +255,8 @@ export function ScheduleView({
         <div className="pt-2 flex items-center gap-2 text-xs text-zinc-400">
           <Clock className="w-4 h-4 text-amber-400 shrink-0" />
           <span>
-            Hijau = Available (bisa dipilih) · Merah = Booked / Full (tidak
-            dapat dipilih).
+            Hijau = Available (bisa dipilih) · Merah = Booked / Full · Abu-abu =
+            Tidak Tersedia.
           </span>
         </div>
       </section>

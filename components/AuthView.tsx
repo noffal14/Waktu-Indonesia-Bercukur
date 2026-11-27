@@ -4,7 +4,8 @@ import { useState } from 'react';
 import {
   AlertCircle,
   ArrowRight,
-  KeyRound,
+  Eye,
+  EyeOff,
   LogIn,
   UserPlus,
 } from 'lucide-react';
@@ -17,6 +18,8 @@ import { Capster, Customer, ServiceResult } from '@/lib/types';
 interface AuthViewProps {
   capsters: Capster[];
   redirectMessage?: string | null;
+  initialMode?: 'masuk' | 'daftar';
+  embedded?: boolean;
   onLogin: (
     nomorWhatsApp: string,
     password: string
@@ -28,23 +31,24 @@ interface AuthViewProps {
     password: string;
     capsterFavoritId?: string;
   }) => ServiceResult<{ customer: Customer }>;
-  onDemoLogin: (customerId: string) => ServiceResult<{ customer: Customer }>;
   onAuthSuccess: () => void;
 }
 
 export function AuthView({
   capsters,
   redirectMessage,
+  initialMode = 'masuk',
+  embedded = false,
   onLogin,
   onRegister,
-  onDemoLogin,
   onAuthSuccess,
 }: AuthViewProps) {
-  const [tab, setTab] = useState<'masuk' | 'daftar'>('masuk');
+  const [tab, setTab] = useState<'masuk' | 'daftar'>(initialMode);
 
   // Login form state
   const [loginWa, setLoginWa] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
 
   // Register form state
@@ -52,8 +56,10 @@ export function AuthView({
   const [regWa, setRegWa] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
+  const [showRegPassword, setShowRegPassword] = useState(false);
   const [regConfirmPassword, setRegConfirmPassword] = useState('');
-  const [regCapsterId, setRegCapsterId] = useState('');
+  const [showRegConfirm, setShowRegConfirm] = useState(false);
+  const [regCapsterId, setRegCapsterId] = useState(capsters[0]?.id || 'hasan');
   const [regConsent, setRegConsent] = useState(false);
 
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -63,14 +69,21 @@ export function AuthView({
     e.preventDefault();
     setLoginError(null);
 
-    const waCheck = validateIndonesianWhatsApp(loginWa);
-    if (!waCheck.valid) {
-      setLoginError(waCheck.error || 'Nomor WhatsApp tidak valid.');
-      return;
-    }
-    if (!loginPassword) {
-      setLoginError('Password wajib diisi.');
-      return;
+    const trimmedInput = loginWa.trim().toLowerCase();
+    const isCapsterUsername = capsters.some(
+      (c) => c.username.trim().toLowerCase() === trimmedInput
+    );
+
+    if (!isCapsterUsername) {
+      const waCheck = validateIndonesianWhatsApp(loginWa);
+      if (!waCheck.valid) {
+        setLoginError(waCheck.error || 'Nomor WhatsApp tidak valid.');
+        return;
+      }
+      if (!loginPassword) {
+        setLoginError('Password wajib diisi.');
+        return;
+      }
     }
 
     const res = onLogin(loginWa, loginPassword);
@@ -125,7 +138,7 @@ export function AuthView({
       nomorWhatsApp: regWa,
       email: regEmail || undefined,
       password: regPassword,
-      capsterFavoritId: regCapsterId || undefined,
+      capsterFavoritId: regCapsterId || capsters[0]?.id,
     });
 
     if (!res.ok) {
@@ -138,25 +151,8 @@ export function AuthView({
     onAuthSuccess();
   };
 
-  const handleQuickDemo = (customerId: string) => {
-    const res = onDemoLogin(customerId);
-    if (res.ok) {
-      onAuthSuccess();
-    }
-  };
-
-  return (
-    <div className="max-w-lg mx-auto py-2 space-y-6">
-      <div className="space-y-1.5 text-center">
-        <h1 className="font-display text-2xl sm:text-3xl font-bold text-stone-100">
-          Akun Pelanggan
-        </h1>
-        <p className="text-sm text-zinc-400">
-          Masuk atau daftar sekali untuk mengambil antrean dan booking tanpa
-          mengetik ulang identitas.
-        </p>
-      </div>
-
+  const formContent = (
+    <div className="space-y-4">
       {redirectMessage && (
         <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/35 text-xs sm:text-sm text-amber-200 flex items-start gap-2.5">
           <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
@@ -164,140 +160,148 @@ export function AuthView({
         </div>
       )}
 
-      {/* Segmented Tab Switch */}
-      <div className="grid grid-cols-2 p-1 rounded-xl bg-[#131317] border border-zinc-800">
-        <button
-          type="button"
-          onClick={() => {
-            setTab('masuk');
-            setLoginError(null);
-          }}
-          className={`min-h-[44px] px-4 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors ${
-            tab === 'masuk'
-              ? 'bg-amber-400 text-zinc-950'
-              : 'text-zinc-300 hover:text-stone-100'
-          }`}
-        >
-          <LogIn className="w-4 h-4" />
-          <span>Masuk</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setTab('daftar');
-            setRegSubmitError(null);
-          }}
-          className={`min-h-[44px] px-4 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors ${
-            tab === 'daftar'
-              ? 'bg-amber-400 text-zinc-950'
-              : 'text-zinc-300 hover:text-stone-100'
-          }`}
-        >
-          <UserPlus className="w-4 h-4" />
-          <span>Daftar</span>
-        </button>
-      </div>
-
-      {/* TAB MASUK */}
-      {tab === 'masuk' && (
-        <div className="space-y-5">
-          <form
-            onSubmit={handleLoginSubmit}
-            className="p-6 sm:p-7 rounded-2xl bg-[#131317] border border-zinc-800/90 space-y-4"
+      {/* Sub-mode switch Masuk / Daftar (untuk standalone mode) */}
+      {!embedded && (
+        <div className="grid grid-cols-2 p-1 rounded-xl bg-[#131317] border border-zinc-800">
+          <button
+            type="button"
+            onClick={() => {
+              setTab('masuk');
+              setLoginError(null);
+            }}
+            className={`min-h-[44px] px-4 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors ${
+              tab === 'masuk'
+                ? 'bg-amber-400 text-zinc-950'
+                : 'text-zinc-300 hover:text-stone-100'
+            }`}
           >
-            {loginError && (
-              <div className="p-3.5 rounded-xl bg-rose-950/50 border border-rose-500/40 text-xs sm:text-sm text-rose-200">
-                {loginError}
-              </div>
-            )}
+            <LogIn className="w-4 h-4" />
+            <span>Masuk</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setTab('daftar');
+              setRegSubmitError(null);
+            }}
+            className={`min-h-[44px] px-4 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors ${
+              tab === 'daftar'
+                ? 'bg-amber-400 text-zinc-950'
+                : 'text-zinc-300 hover:text-stone-100'
+            }`}
+          >
+            <UserPlus className="w-4 h-4" />
+            <span>Daftar</span>
+          </button>
+        </div>
+      )}
 
-            <div>
-              <label
-                htmlFor="login-wa"
-                className="block text-sm font-medium text-stone-200 mb-1.5"
-              >
-                Nomor WhatsApp
-              </label>
-              <input
-                id="login-wa"
-                type="tel"
-                required
-                value={loginWa}
-                onChange={(e) => setLoginWa(e.target.value)}
-                placeholder="Contoh: 081234567890 atau 62812..."
-                className="w-full min-h-[48px] px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-stone-100 placeholder:text-zinc-500 text-sm font-mono focus:outline-none focus:border-amber-400"
-              />
+      {/* FORM MASUK PELANGGAN */}
+      {tab === 'masuk' && (
+        <form
+          onSubmit={handleLoginSubmit}
+          className={
+            embedded
+              ? 'space-y-4'
+              : 'p-6 sm:p-7 rounded-2xl bg-[#131317] border border-zinc-800/90 space-y-4'
+          }
+        >
+          {loginError && (
+            <div className="p-3.5 rounded-xl bg-rose-950/50 border border-rose-500/40 text-xs sm:text-sm text-rose-200">
+              {loginError}
             </div>
+          )}
 
-            <div>
-              <label
-                htmlFor="login-password"
-                className="block text-sm font-medium text-stone-200 mb-1.5"
-              >
-                Password
-              </label>
+          <div>
+            <label
+              htmlFor="login-wa"
+              className="block text-sm font-medium text-stone-200 mb-1.5"
+            >
+              Nomor WhatsApp
+            </label>
+            <input
+              id="login-wa"
+              type="tel"
+              autoComplete="tel"
+              required
+              value={loginWa}
+              onChange={(e) => setLoginWa(e.target.value)}
+              placeholder="Contoh: 081234567890 atau 62812..."
+              className="w-full min-h-[48px] px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-stone-100 placeholder:text-zinc-500 text-sm font-mono focus:outline-none focus:border-amber-400"
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="login-password"
+              className="block text-sm font-medium text-stone-200 mb-1.5"
+            >
+              Password
+            </label>
+            <div className="relative">
               <input
                 id="login-password"
-                type="password"
+                type={showLoginPassword ? 'text' : 'password'}
+                autoComplete="current-password"
                 required
                 value={loginPassword}
                 onChange={(e) => setLoginPassword(e.target.value)}
                 placeholder="Masukkan password Anda"
-                className="w-full min-h-[48px] px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-stone-100 placeholder:text-zinc-500 text-sm focus:outline-none focus:border-amber-400"
+                className="w-full min-h-[48px] pl-4 pr-12 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-stone-100 placeholder:text-zinc-500 text-sm focus:outline-none focus:border-amber-400"
               />
-            </div>
-
-            <button
-              type="submit"
-              className="w-full min-h-[52px] px-5 py-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 font-semibold text-base flex items-center justify-center gap-2 transition-colors"
-            >
-              <LogIn className="w-4 h-4" />
-              <span>Masuk ke Akun</span>
-            </button>
-          </form>
-
-          {/* Akun Demo Pelanggan */}
-          <div className="p-5 rounded-2xl bg-[#131317] border border-zinc-800/80 space-y-3">
-            <div className="flex items-center gap-2 text-xs font-medium text-zinc-300">
-              <KeyRound className="w-4 h-4 text-amber-400 shrink-0" />
-              <span>Akses Cepat Akun Demo (Password: demo123)</span>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <button
                 type="button"
-                onClick={() => handleQuickDemo('cust-1')}
-                className="p-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-left transition-colors min-h-[56px]"
+                onClick={() => setShowLoginPassword((prev) => !prev)}
+                aria-label={
+                  showLoginPassword
+                    ? 'Sembunyikan password'
+                    : 'Tampilkan password'
+                }
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-lg flex items-center justify-center text-zinc-400 hover:text-stone-100 transition-colors"
               >
-                <p className="text-xs font-semibold text-stone-100">
-                  Andi Pratama (Pelanggan 1)
-                </p>
-                <p className="text-[11px] font-mono text-zinc-400 mt-0.5">
-                  081234567890 · Ada 1 antrean aktif
-                </p>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickDemo('cust-2')}
-                className="p-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-left transition-colors min-h-[56px]"
-              >
-                <p className="text-xs font-semibold text-stone-100">
-                  Bima Nugraha (Pelanggan 2)
-                </p>
-                <p className="text-[11px] font-mono text-zinc-400 mt-0.5">
-                  081298765432 · Ada 1 booking 15:00
-                </p>
+                {showLoginPassword ? (
+                  <EyeOff className="w-4 h-4" />
+                ) : (
+                  <Eye className="w-4 h-4" />
+                )}
               </button>
             </div>
           </div>
-        </div>
+
+          <button
+            type="submit"
+            className="w-full min-h-[52px] px-5 py-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 font-semibold text-base flex items-center justify-center gap-2 transition-colors"
+          >
+            <LogIn className="w-4 h-4" />
+            <span>Masuk</span>
+          </button>
+
+          <p className="text-xs sm:text-sm text-center text-zinc-400 pt-1">
+            Belum punya akun?{' '}
+            <button
+              type="button"
+              onClick={() => {
+                setTab('daftar');
+                setRegSubmitError(null);
+              }}
+              className="text-amber-400 hover:text-amber-300 font-semibold underline-offset-4 hover:underline"
+            >
+              Daftar
+            </button>
+          </p>
+        </form>
       )}
 
-      {/* TAB DAFTAR */}
+      {/* FORM DAFTAR PELANGGAN */}
       {tab === 'daftar' && (
         <form
           onSubmit={handleRegisterSubmit}
           noValidate
-          className="p-6 sm:p-7 rounded-2xl bg-[#131317] border border-zinc-800/90 space-y-4"
+          className={
+            embedded
+              ? 'space-y-4'
+              : 'p-6 sm:p-7 rounded-2xl bg-[#131317] border border-zinc-800/90 space-y-4'
+          }
         >
           {regSubmitError && (
             <div className="p-3.5 rounded-xl bg-rose-950/50 border border-rose-500/40 text-xs sm:text-sm text-rose-200 flex flex-col gap-2">
@@ -398,17 +402,35 @@ export function AuthView({
               >
                 Password <span className="text-rose-400">*</span>
               </label>
-              <input
-                id="reg-password"
-                type="password"
-                value={regPassword}
-                onChange={(e) => {
-                  setRegPassword(e.target.value);
-                  setFieldErrors((prev) => ({ ...prev, password: '' }));
-                }}
-                placeholder="Min. 6 karakter"
-                className="w-full min-h-[46px] px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-stone-100 placeholder:text-zinc-500 text-sm focus:outline-none focus:border-amber-400"
-              />
+              <div className="relative">
+                <input
+                  id="reg-password"
+                  type={showRegPassword ? 'text' : 'password'}
+                  value={regPassword}
+                  onChange={(e) => {
+                    setRegPassword(e.target.value);
+                    setFieldErrors((prev) => ({ ...prev, password: '' }));
+                  }}
+                  placeholder="Min. 6 karakter"
+                  className="w-full min-h-[46px] pl-4 pr-11 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-stone-100 placeholder:text-zinc-500 text-sm focus:outline-none focus:border-amber-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowRegPassword((prev) => !prev)}
+                  aria-label={
+                    showRegPassword
+                      ? 'Sembunyikan password'
+                      : 'Tampilkan password'
+                  }
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 w-9 h-9 rounded-lg flex items-center justify-center text-zinc-400 hover:text-stone-100"
+                >
+                  {showRegPassword ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
               {fieldErrors.password && (
                 <p className="text-xs text-rose-400 mt-1">
                   {fieldErrors.password}
@@ -423,17 +445,35 @@ export function AuthView({
               >
                 Konfirmasi Password <span className="text-rose-400">*</span>
               </label>
-              <input
-                id="reg-confirm"
-                type="password"
-                value={regConfirmPassword}
-                onChange={(e) => {
-                  setRegConfirmPassword(e.target.value);
-                  setFieldErrors((prev) => ({ ...prev, confirmPassword: '' }));
-                }}
-                placeholder="Ulangi password"
-                className="w-full min-h-[46px] px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-stone-100 placeholder:text-zinc-500 text-sm focus:outline-none focus:border-amber-400"
-              />
+              <div className="relative">
+                <input
+                  id="reg-confirm"
+                  type={showRegConfirm ? 'text' : 'password'}
+                  value={regConfirmPassword}
+                  onChange={(e) => {
+                    setRegConfirmPassword(e.target.value);
+                    setFieldErrors((prev) => ({ ...prev, confirmPassword: '' }));
+                  }}
+                  placeholder="Ulangi password"
+                  className="w-full min-h-[46px] pl-4 pr-11 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-stone-100 placeholder:text-zinc-500 text-sm focus:outline-none focus:border-amber-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowRegConfirm((prev) => !prev)}
+                  aria-label={
+                    showRegConfirm
+                      ? 'Sembunyikan konfirmasi password'
+                      : 'Tampilkan konfirmasi password'
+                  }
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 w-9 h-9 rounded-lg flex items-center justify-center text-zinc-400 hover:text-stone-100"
+                >
+                  {showRegConfirm ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
               {fieldErrors.confirmPassword && (
                 <p className="text-xs text-rose-400 mt-1">
                   {fieldErrors.confirmPassword}
@@ -456,7 +496,6 @@ export function AuthView({
               onChange={(e) => setRegCapsterId(e.target.value)}
               className="w-full min-h-[46px] px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-stone-100 text-sm focus:outline-none focus:border-amber-400"
             >
-              <option value="">Tidak ada preferensi khusus</option>
               {capsters.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.nama} ({c.gelar})
@@ -492,10 +531,43 @@ export function AuthView({
             className="w-full min-h-[52px] px-5 py-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 font-semibold text-base flex items-center justify-center gap-2 transition-colors"
           >
             <UserPlus className="w-4 h-4" />
-            <span>Daftar & Masuk Sekarang</span>
+            <span>Daftar &amp; Masuk Sekarang</span>
           </button>
+
+          <p className="text-xs sm:text-sm text-center text-zinc-400 pt-1">
+            Sudah punya akun?{' '}
+            <button
+              type="button"
+              onClick={() => {
+                setTab('masuk');
+                setLoginError(null);
+              }}
+              className="text-amber-400 hover:text-amber-300 font-semibold underline-offset-4 hover:underline"
+            >
+              Masuk
+            </button>
+          </p>
         </form>
       )}
+    </div>
+  );
+
+  if (embedded) {
+    return formContent;
+  }
+
+  return (
+    <div className="max-w-lg mx-auto py-2 space-y-6">
+      <div className="space-y-1.5 text-center">
+        <h1 className="font-display text-2xl sm:text-3xl font-bold text-stone-100">
+          Akun Pelanggan
+        </h1>
+        <p className="text-sm text-zinc-400">
+          Masuk atau daftar sekali untuk mengambil antrean dan booking tanpa
+          mengetik ulang identitas.
+        </p>
+      </div>
+      {formContent}
     </div>
   );
 }

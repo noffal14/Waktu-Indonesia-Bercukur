@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  Ban,
   CheckCircle2,
   Clock,
   Lock,
@@ -27,6 +28,10 @@ const STATUS_STYLES: Record<
     classes: 'bg-red-500/15 text-red-400 border-red-500/35',
     label: 'Full',
   },
+  'Tidak Tersedia': {
+    classes: 'bg-zinc-800/90 text-zinc-300 border-zinc-600/70',
+    label: 'Tidak Tersedia',
+  },
   Waiting: {
     classes: 'bg-amber-500/12 text-amber-300 border-amber-500/30',
     label: 'Waiting',
@@ -42,6 +47,10 @@ const STATUS_STYLES: Record<
   Canceled: {
     classes: 'bg-rose-950/60 text-rose-300 border-rose-500/30',
     label: 'Canceled',
+  },
+  Kedaluwarsa: {
+    classes: 'bg-zinc-900 text-zinc-400 border-zinc-700',
+    label: 'Kedaluwarsa',
   },
 };
 
@@ -62,7 +71,10 @@ export function StatusIndicator({
       case 'Booked':
       case 'Full':
         return <Lock className="w-3.5 h-3.5 shrink-0" />;
+      case 'Tidak Tersedia':
+        return <Ban className="w-3.5 h-3.5 shrink-0" />;
       case 'Waiting':
+      case 'Kedaluwarsa':
         return <Clock className="w-3.5 h-3.5 shrink-0" />;
       case 'In-Service':
         return <Scissors className="w-3.5 h-3.5 shrink-0" />;

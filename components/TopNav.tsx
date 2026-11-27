@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import {
   CalendarCheck,
   CalendarDays,
@@ -10,14 +11,12 @@ import {
   Scissors,
   Ticket,
   User,
-  UserCheck,
 } from 'lucide-react';
 import { AppView, Customer } from '@/lib/types';
 
 interface TopNavProps {
   currentView: AppView;
   onNavigate: (view: AppView) => void;
-  isCapsterLoggedIn: boolean;
   currentCustomer: Customer | null;
   onLogoutCustomer: () => void;
 }
@@ -42,7 +41,6 @@ const MOBILE_BOTTOM_ITEMS: { id: AppView; label: string }[] = [
 export function TopNav({
   currentView,
   onNavigate,
-  isCapsterLoggedIn,
   currentCustomer,
   onLogoutCustomer,
 }: TopNavProps) {
@@ -73,7 +71,7 @@ export function TopNav({
           <button
             type="button"
             onClick={() => onNavigate('beranda')}
-            className="font-display text-sm sm:text-base md:text-lg font-bold tracking-tight text-stone-100 hover:text-amber-400 transition-colors whitespace-nowrap shrink-0 text-left truncate max-w-[165px] sm:max-w-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 rounded-md"
+            className="font-display text-sm sm:text-base md:text-lg font-bold tracking-tight text-stone-100 hover:text-amber-400 transition-colors whitespace-nowrap shrink-0 text-left truncate max-w-[185px] sm:max-w-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 rounded-md"
           >
             Waktu Indonesia Bercukur
           </button>
@@ -102,7 +100,7 @@ export function TopNav({
             })}
           </nav>
 
-          {/* Zone 3: Customer Auth + Capster Portal */}
+          {/* Zone 3: Customer Auth Only (Tanpa Tautan Dashboard Capster) */}
           <div className="flex items-center gap-2 shrink-0">
             {currentCustomer ? (
               <>
@@ -117,7 +115,7 @@ export function TopNav({
                   }`}
                 >
                   <User className="w-3.5 h-3.5 shrink-0" />
-                  <span className="max-w-[76px] sm:max-w-[120px] truncate">
+                  <span className="max-w-[90px] sm:max-w-[140px] truncate">
                     {currentCustomer.nama.split(' ')[0]}
                   </span>
                 </button>
@@ -133,35 +131,14 @@ export function TopNav({
                 </button>
               </>
             ) : (
-              <button
-                type="button"
-                onClick={() => onNavigate('auth')}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs md:text-sm font-semibold whitespace-nowrap shrink-0 min-h-[34px] md:min-h-[38px] transition-colors ${
-                  currentView === 'auth'
-                    ? 'bg-amber-400 text-zinc-950'
-                    : 'bg-amber-400 hover:bg-amber-300 text-zinc-950'
-                }`}
+              <Link
+                href="/login"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs md:text-sm font-semibold whitespace-nowrap shrink-0 min-h-[34px] md:min-h-[38px] bg-amber-400 hover:bg-amber-300 text-zinc-950 transition-colors"
               >
                 <LogIn className="w-3.5 h-3.5 shrink-0" />
                 <span>Masuk / Daftar</span>
-              </button>
+              </Link>
             )}
-
-            <button
-              type="button"
-              onClick={() => onNavigate('capster')}
-              title="Portal Khusus Capster"
-              className={`inline-flex items-center gap-1.5 px-2.5 md:px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 min-h-[34px] md:min-h-[38px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${
-                currentView === 'capster'
-                  ? 'bg-amber-400 text-zinc-950'
-                  : 'bg-zinc-900 text-amber-300 border border-amber-500/35 hover:bg-amber-500/15'
-              }`}
-            >
-              <UserCheck className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden sm:inline">
-                {isCapsterLoggedIn ? 'Dashboard Capster' : 'Capster'}
-              </span>
-            </button>
           </div>
         </div>
       </header>

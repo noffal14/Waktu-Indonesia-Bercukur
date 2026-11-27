@@ -10,7 +10,11 @@ import {
   Wifi,
   WifiOff,
 } from 'lucide-react';
-import { formatDateIndo, formatTimeHHMM } from '@/lib/barber-service';
+import {
+  formatDateIndo,
+  formatTimeWibHHMM,
+  maskCustomerName,
+} from '@/lib/barber-service';
 import {
   AppView,
   BarberDatabaseState,
@@ -24,6 +28,7 @@ import { StatusIndicator } from './StatusIndicator';
 interface StatusViewProps {
   dbState: BarberDatabaseState;
   todayStr: string;
+  operationalDayKey: string;
   queueEstimation: QueueEstimationSummary;
   currentCustomer: Customer | null;
   activeCustomerWalkin: DataAntreanWalkin | null;
@@ -31,13 +36,13 @@ interface StatusViewProps {
   isOffline: boolean;
   lastSyncedFormatted: string;
   onRefresh: () => void;
-  onTrackWalkinId: (id: string) => void;
   onNavigate: (view: AppView) => void;
 }
 
 export function StatusView({
   dbState,
   todayStr,
+  operationalDayKey,
   queueEstimation,
   currentCustomer,
   activeCustomerWalkin,
@@ -45,17 +50,22 @@ export function StatusView({
   isOffline,
   lastSyncedFormatted,
   onRefresh,
-  onTrackWalkinId,
   onNavigate,
 }: StatusViewProps) {
   const [searchNomor, setSearchNomor] = useState('');
+  const [trackedWalkinId, setTrackedWalkinId] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
 
   const todayWalkins = dbState.walkinQueue
-    .filter((w) => w.tanggal === todayStr)
+    .filter(
+      (w) => (w.kunciHariOperasional || w.tanggal) === operationalDayKey
+    )
     .sort((a, b) => a.waktuAmbil - b.waktuAmbil);
 
   const trackedWalkin =
+    (trackedWalkinId
+      ? todayWalkins.find((w) => w.id === trackedWalkinId) || null
+      : null) ||
     (currentCustomer
       ? todayWalkins.find(
           (w) =>
@@ -64,13 +74,15 @@ export function StatusView({
         ) ||
         todayWalkins.find((w) => w.customerId === currentCustomer.id)
       : null) ||
-    (activeCustomerWalkin && activeCustomerWalkin.tanggal === todayStr
+    (activeCustomerWalkin &&
+    (activeCustomerWalkin.kunciHariOperasional ||
+      activeCustomerWalkin.tanggal) === operationalDayKey
       ? todayWalkins.find((w) => w.id === activeCustomerWalkin.id) ||
         activeCustomerWalkin
       : null);
 
   const getCapsterName = (capsterId?: string) => {
-    if (!capsterId) return 'Capster tersedia';
+    if (!capsterId) return 'Hasan';
     return (
       dbState.capsters.find((c) => c.id === capsterId)?.nama || 'Capster'
     );
@@ -81,17 +93,19 @@ export function StatusView({
     setSearchError(null);
     const q = searchNomor.trim().toUpperCase();
     if (!q) {
-      setSearchError('Masukkan nomor antrean, misalnya A003.');
+      setSearchError('Masukkan nomor antrean, misalnya A001.');
       return;
     }
     const found = todayWalkins.find(
       (w) => w.nomorAntrean.toUpperCase() === q
     );
     if (!found) {
-      setSearchError(`Nomor antrean "${q}" tidak ditemukan untuk hari ini.`);
+      setSearchError(
+        `Nomor antrean "${q}" tidak ditemukan pada sesi operasional hari ini.`
+      );
       return;
     }
-    onTrackWalkinId(found.id);
+    setTrackedWalkinId(found.id);
     setSearchNomor('');
   };
 
@@ -100,19 +114,19 @@ export function StatusView({
     : -1;
   const antreanDiDepan = trackedPosIndex >= 0 ? trackedPosIndex : 0;
   const estimasiMenit =
+    queueEstimation.sisaWaktuInServiceMenit +
     antreanDiDepan * queueEstimation.rataRataDurasiMenit;
 
   return (
     <div className="space-y-8">
-      {/* Header & Connection / Last Updated Bar */}
+      {/* Header & Connection Bar */}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div className="space-y-1">
           <h1 className="font-display text-2xl sm:text-3xl font-bold text-stone-100">
-            Status & Estimasi Antrean Live
+            Status &amp; Estimasi Antrean Live
           </h1>
           <p className="text-sm text-zinc-400">
-            {formatDateIndo(todayStr)} · Pembaruan otomatis setiap beberapa
-            detik
+            {formatDateIndo(todayStr)} · Diperbarui otomatis secara berkala
           </p>
         </div>
 
@@ -146,7 +160,7 @@ export function StatusView({
         </div>
       </div>
 
-      {/* Offline Banner (Alternative Flow UC-02) */}
+      {/* Offline Banner */}
       {isOffline && (
         <div
           role="status"
@@ -158,7 +172,7 @@ export function StatusView({
               Koneksi terputus — menampilkan data terakhir
             </p>
             <p className="text-xs text-amber-200/80">
-              Data tetap dapat dilihat saat offline. Terakhir diperbarui:{' '}
+              Terakhir diperbarui:{' '}
               <span className="font-mono tabular-nums font-semibold">
                 {lastSyncedFormatted} WIB
               </span>
@@ -168,7 +182,7 @@ export function StatusView({
         </div>
       )}
 
-      {/* Notifikasi Pembatalan Booking Otomatis (>15 menit) jika ada di perangkat ini */}
+      {/* Notifikasi Pembatalan Booking Milik Pelanggan */}
       {activeCustomerBooking && activeCustomerBooking.status === 'Canceled' && (
         <div className="p-4 sm:p-5 rounded-xl bg-rose-950/40 border border-rose-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-start gap-3">
@@ -178,12 +192,14 @@ export function StatusView({
                 Booking {activeCustomerBooking.kodeTiket} Dibatalkan{' '}
                 {activeCustomerBooking.alasanBatal === 'otomatis'
                   ? 'Otomatis oleh Sistem'
-                  : 'oleh Capster'}
+                  : activeCustomerBooking.alasanBatal ===
+                      'capster_tidak_tersedia'
+                    ? 'karena Capster Tidak Tersedia'
+                    : 'oleh Capster / Pelanggan'}
               </p>
               <p className="text-xs text-rose-100/80">
-                Slot pukul {activeCustomerBooking.jamSlot} WIB melewati batas
-                toleransi keterlambatan 15 menit tanpa konfirmasi, sehingga
-                slot dibuka kembali untuk pelanggan lain.
+                {activeCustomerBooking.catatanBatal ||
+                  `Slot pukul ${activeCustomerBooking.jamSlot} WIB dibatalkan.`}
               </p>
             </div>
           </div>
@@ -192,70 +208,75 @@ export function StatusView({
             onClick={() => onNavigate('booking')}
             className="px-4 py-2.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-100 text-xs font-semibold whitespace-nowrap shrink-0 min-h-[40px]"
           >
-            Buat Booking Ulang
+            Buat Booking Baru
           </button>
         </div>
       )}
 
-      {/* Bagian 1: Nomor yang Sedang Dipanggil / In-Service + Info Estimasi */}
+      {/* Bagian 1: Sedang Dilayani (In-Service) + Estimasi Waktu Tersisa */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         <section className="lg:col-span-7 p-5 sm:p-6 rounded-2xl bg-[#131317] border border-zinc-800/90 space-y-4">
           <div className="flex items-center justify-between gap-3">
             <h2 className="font-display text-lg font-semibold text-stone-100">
-              Sedang Dipanggil & Dilayani
+              Sedang Dilayani
             </h2>
             <StatusIndicator status="In-Service" compact />
           </div>
 
-          {queueEstimation.sedangDilayaniWalkin.length === 0 &&
-          queueEstimation.sedangDilayaniBooking.length === 0 ? (
+          {queueEstimation.inServiceDetails.length === 0 ? (
             <div className="p-6 rounded-xl bg-zinc-900/60 border border-zinc-800 text-center text-sm text-zinc-400">
-              Belum ada pelanggan di kursi cukur saat ini.
+              Belum ada pelanggan yang sedang dilayani di kursi cukur saat ini.
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {queueEstimation.sedangDilayaniWalkin.map((item) => (
+              {queueEstimation.inServiceDetails.map((detail) => (
                 <div
-                  key={item.id}
-                  className="p-4 rounded-xl bg-sky-950/25 border border-sky-500/35 flex items-center justify-between gap-3"
+                  key={detail.id}
+                  className="p-4 rounded-xl bg-sky-950/25 border border-sky-500/35 space-y-2.5"
                 >
-                  <div>
-                    <p className="text-xs text-sky-300">Walk-in Dipanggil</p>
-                    <p className="font-mono tabular-nums text-3xl font-bold text-stone-100 mt-0.5">
-                      {item.nomorAntrean}
-                    </p>
-                    <p className="text-xs text-zinc-300 mt-1">
-                      {item.namaPelanggan || 'Tamu'} · Capster{' '}
-                      {getCapsterName(item.capsterId)}
-                    </p>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs text-sky-300 font-medium">
+                        {detail.tipe === 'walkin'
+                          ? 'Walk-in Sedang Dilayani'
+                          : 'Booking Sedang Dilayani'}
+                      </p>
+                      <p className="font-mono tabular-nums text-2xl font-bold text-stone-100 mt-0.5">
+                        {detail.kodeAtauNomor}
+                      </p>
+                    </div>
+                    <Scissors className="w-5 h-5 text-sky-400 shrink-0" />
                   </div>
-                  <Scissors className="w-6 h-6 text-sky-400 shrink-0" />
-                </div>
-              ))}
 
-              {queueEstimation.sedangDilayaniBooking.map((bk) => (
-                <div
-                  key={bk.id}
-                  className="p-4 rounded-xl bg-sky-950/20 border border-sky-500/30 flex items-center justify-between gap-3"
-                >
-                  <div className="min-w-0">
-                    <p className="text-xs text-sky-300">
-                      Booking Slot {bk.jamSlot}
+                  <div className="text-xs space-y-1 text-zinc-300">
+                    <p>
+                      Pelanggan:{' '}
+                      <strong className="text-stone-100">
+                        {detail.namaTersamarkan}
+                      </strong>{' '}
+                      · Capster {getCapsterName(detail.capsterId)}
                     </p>
-                    <p className="font-display text-lg font-bold text-stone-100 truncate mt-0.5">
-                      {bk.nama}
+                    <p className="font-mono tabular-nums text-zinc-400">
+                      Mulai pukul {detail.jamMulaiHHMM} WIB (berjalan{' '}
+                      {detail.lamaBerjalanMenit} mnt)
                     </p>
-                    <p className="text-xs text-zinc-300 mt-1 font-mono tabular-nums">
-                      {bk.kodeTiket} · {getCapsterName(bk.capsterId)}
+                    <p
+                      className={`font-semibold ${
+                        detail.melebihiEstimasi
+                          ? 'text-amber-300'
+                          : 'text-sky-300'
+                      }`}
+                    >
+                      {detail.melebihiEstimasi
+                        ? 'Hampir selesai / melebihi estimasi'
+                        : `Estimasi selesai ± ${detail.estimasiSisaMenit} menit lagi`}
                     </p>
                   </div>
-                  <Scissors className="w-6 h-6 text-sky-400 shrink-0" />
                 </div>
               ))}
             </div>
           )}
 
-          {/* Penjelasan Perhitungan Estimasi */}
           <div className="pt-3 border-t border-zinc-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-zinc-400">
             <div className="flex items-center gap-2">
               <Clock className="w-4 h-4 text-amber-400 shrink-0" />
@@ -274,7 +295,7 @@ export function StatusView({
           </div>
         </section>
 
-        {/* Bagian 2: Posisi Antrean Pelanggan */}
+        {/* Bagian 2: Posisi Antrean Anda */}
         <section className="lg:col-span-5 p-5 sm:p-6 rounded-2xl bg-[#131317] border border-amber-500/30 space-y-4">
           <h2 className="font-display text-lg font-semibold text-stone-100">
             Posisi Antrean Anda
@@ -300,7 +321,7 @@ export function StatusView({
                       {antreanDiDepan} antrean
                     </p>
                     <p className="text-[11px] text-zinc-500 mt-0.5">
-                      Posisi ke-{antreanDiDepan + 1} dalam antrean tunggu
+                      Posisi ke-{antreanDiDepan + 1} menunggu
                     </p>
                   </div>
                   <div className="p-3.5 rounded-xl bg-zinc-900/70 border border-zinc-800">
@@ -309,8 +330,8 @@ export function StatusView({
                       {estimasiMenit === 0 ? '0 mnt' : `${estimasiMenit} mnt`}
                     </p>
                     <p className="text-[11px] text-zinc-500 mt-0.5 font-mono tabular-nums">
-                      {antreanDiDepan} × {queueEstimation.rataRataDurasiMenit}{' '}
-                      mnt
+                      {queueEstimation.sisaWaktuInServiceMenit} + (
+                      {antreanDiDepan} × {queueEstimation.rataRataDurasiMenit})
                     </p>
                   </div>
                 </div>
@@ -329,10 +350,16 @@ export function StatusView({
                   Terima kasih telah bercukur!
                 </div>
               )}
+
+              {trackedWalkin.status === 'Kedaluwarsa' && (
+                <div className="p-3.5 rounded-xl bg-zinc-900 border border-zinc-700 text-sm text-zinc-300">
+                  Antrean sesi operasional sebelumnya telah kedaluwarsa.
+                </div>
+              )}
             </div>
           ) : (
             <div className="p-4 rounded-xl bg-zinc-900/60 border border-zinc-800 text-sm text-zinc-400 space-y-2">
-              <p>Belum ada nomor antrean yang dilacak di perangkat ini.</p>
+              <p>Belum ada antrean aktif yang sedang Anda lacak.</p>
               <button
                 type="button"
                 onClick={() => onNavigate('antrean')}
@@ -343,13 +370,13 @@ export function StatusView({
             </div>
           )}
 
-          {/* Form Lacak Nomor Antrean Lain */}
+          {/* Form Lacak Nomor Antrean */}
           <form onSubmit={handleFindNomor} className="pt-2 space-y-2">
             <label
               htmlFor="cek-nomor-antrean"
               className="block text-xs text-zinc-400"
             >
-              Lacak nomor antrean lain
+              Lacak nomor antrean hari ini
             </label>
             <div className="flex gap-2">
               <input
@@ -357,7 +384,7 @@ export function StatusView({
                 type="text"
                 value={searchNomor}
                 onChange={(e) => setSearchNomor(e.target.value)}
-                placeholder="Contoh: A003"
+                placeholder="Contoh: A001"
                 className="flex-1 min-h-[42px] px-3.5 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-stone-100 placeholder:text-zinc-500 text-sm font-mono uppercase focus:outline-none focus:border-amber-400"
               />
               <button
@@ -375,7 +402,7 @@ export function StatusView({
         </section>
       </div>
 
-      {/* Bagian 3: Daftar Antrean Walk-in Hari Ini (FIFO) */}
+      {/* Bagian 3: Daftar Antrean Walk-in Hari Ini (Nama Tersamarkan untuk Privasi) */}
       <section className="rounded-2xl bg-[#131317] border border-zinc-800/90 overflow-hidden">
         <div className="p-5 sm:p-6 border-b border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
@@ -383,8 +410,8 @@ export function StatusView({
               Daftar Antrean Walk-in Hari Ini
             </h2>
             <p className="text-xs text-zinc-400">
-              Diurutkan murni berdasarkan waktu ambil nomor (First Come, First
-              Served).
+              Urutan murni berdasarkan waktu ambil nomor (nama pelanggan lain
+              disamarkan demi privasi).
             </p>
           </div>
           <span className="text-xs font-mono tabular-nums text-zinc-400">
@@ -394,7 +421,7 @@ export function StatusView({
 
         {todayWalkins.length === 0 ? (
           <div className="p-8 text-center text-sm text-zinc-400">
-            Belum ada antrean walk-in hari ini.
+            Belum ada antrean hari ini.
           </div>
         ) : (
           <div className="divide-y divide-zinc-800/80">
@@ -404,12 +431,12 @@ export function StatusView({
               );
               const estWait =
                 waitIdx >= 0
-                  ? waitIdx * queueEstimation.rataRataDurasiMenit
+                  ? queueEstimation.sisaWaktuInServiceMenit +
+                    waitIdx * queueEstimation.rataRataDurasiMenit
                   : null;
-              const isMine =
-                Boolean(
-                  currentCustomer && item.customerId === currentCustomer.id
-                ) || trackedWalkin?.id === item.id;
+              const isMine = Boolean(
+                currentCustomer && item.customerId === currentCustomer.id
+              );
 
               return (
                 <div
@@ -424,7 +451,9 @@ export function StatusView({
                     </span>
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-stone-100 truncate">
-                        {item.namaPelanggan || 'Tamu Walk-in'}
+                        {isMine
+                          ? item.namaPelanggan || currentCustomer?.nama
+                          : maskCustomerName(item.namaPelanggan)}
                         {isMine && (
                           <span className="ml-2 text-xs text-amber-400 font-normal">
                             (Antrean Anda)
@@ -432,10 +461,8 @@ export function StatusView({
                         )}
                       </p>
                       <p className="text-xs text-zinc-400 font-mono tabular-nums">
-                        Ambil {formatTimeHHMM(item.waktuAmbil)} WIB
-                        {item.capsterId
-                          ? ` · Capster ${getCapsterName(item.capsterId)}`
-                          : ''}
+                        Ambil {formatTimeWibHHMM(item.waktuAmbil)} WIB · Capster{' '}
+                        {getCapsterName(item.capsterId)}
                       </p>
                     </div>
                   </div>

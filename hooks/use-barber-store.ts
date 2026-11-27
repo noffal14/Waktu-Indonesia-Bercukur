@@ -3,57 +3,65 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   barberService,
-  createSeedData,
-  formatDateYYYYMMDD,
-  formatTimeHHMM,
-  getEffectiveNowMs,
+  createInitialSystemState,
+  formatTimeWibHHMM,
 } from '@/lib/barber-service';
+import {
+  formatLiveClockBannerWib,
+  getShopOperationalStatus,
+  getWibParts,
+} from '@/lib/barbershop-config';
+import {
+  CapsterProfile,
+  getInitialCapsterProfile,
+} from '@/lib/capster-profile';
 import {
   BarberDatabaseState,
   Capster,
   Customer,
   DataAntreanWalkin,
   DataBooking,
+  Promo,
   QueueEstimationSummary,
+  SelectedServiceInput,
   ServiceResult,
+  SessionRole,
 } from '@/lib/types';
 
 export function useBarberStore() {
   const [dbState, setDbState] = useState<BarberDatabaseState>(() =>
-    createSeedData()
+    createInitialSystemState()
   );
   const [hydrated, setHydrated] = useState(false);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [browserOnline, setBrowserOnline] = useState(true);
-  const [simulateOffline, setSimulateOffline] = useState(false);
+  const [sessionRole, setSessionRole] = useState<SessionRole>(null);
   const [customerSessionId, setCustomerSessionId] = useState<string | null>(
-    null
-  );
-  const [activeWalkinId, setActiveWalkinId] = useState<string | null>(null);
-  const [activeBookingCode, setActiveBookingCode] = useState<string | null>(
     null
   );
   const [loggedInCapsterId, setLoggedInCapsterId] = useState<string | null>(
     null
   );
-  const [lastSyncedFormatted, setLastSyncedFormatted] = useState<string>('13:05');
+  const [lastSyncedFormatted, setLastSyncedFormatted] = useState<string>(() =>
+    formatTimeWibHHMM(Date.now())
+  );
 
-  const isOffline = !browserOnline || simulateOffline;
+  const isOffline = !browserOnline;
   const isOfflineRef = useRef(isOffline);
   useEffect(() => {
     isOfflineRef.current = isOffline;
   }, [isOffline]);
 
-  const refreshFromStore = useCallback(() => {
-    if (isOfflineRef.current) {
-      return;
-    }
+  const syncStateFromStorage = useCallback(() => {
+    if (isOfflineRef.current) return;
+    const currentNow = Date.now();
     const next = barberService.syncAndGetState();
     setDbState(next);
-    setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(next)));
+    setNowMs(currentNow);
+    setLastSyncedFormatted(formatTimeWibHHMM(currentNow));
+    setSessionRole(barberService.getSessionRole());
     setCustomerSessionId(barberService.getCustomerSessionId());
-    setActiveWalkinId(barberService.getCustomerWalkinId());
-    setActiveBookingCode(barberService.getCustomerBookingCode());
-    setLoggedInCapsterId(barberService.getCapsterSession());
+    setLoggedInCapsterId(barberService.getCapsterSessionId());
   }, []);
 
   useEffect(() => {
@@ -61,40 +69,48 @@ export function useBarberStore() {
       setBrowserOnline(
         typeof navigator !== 'undefined' ? navigator.onLine : true
       );
-      const initial = barberService.syncAndGetState();
-      setDbState(initial);
-      setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(initial)));
-      setCustomerSessionId(barberService.getCustomerSessionId());
-      setActiveWalkinId(barberService.getCustomerWalkinId());
-      setActiveBookingCode(barberService.getCustomerBookingCode());
-      setLoggedInCapsterId(barberService.getCapsterSession());
+      syncStateFromStorage();
       setHydrated(true);
     }, 0);
 
     const handleOnline = () => {
       setBrowserOnline(true);
+      const currentNow = Date.now();
       const synced = barberService.syncAndGetState();
       setDbState(synced);
-      setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(synced)));
+      setNowMs(currentNow);
+      setLastSyncedFormatted(formatTimeWibHHMM(currentNow));
     };
     const handleOffline = () => {
       setBrowserOnline(false);
     };
     const handleStorage = () => {
-      if (!isOfflineRef.current) {
-        refreshFromStore();
+      syncStateFromStorage();
+    };
+    const handleVisibilityChange = () => {
+      if (
+        typeof document !== 'undefined' &&
+        document.visibilityState === 'visible' &&
+        !isOfflineRef.current
+      ) {
+        syncStateFromStorage();
       }
     };
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     window.addEventListener('storage', handleStorage);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    const interval = window.setInterval(() => {
+    // Jam WIB real-time berdetak setiap 1 detik
+    const clockInterval = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+
+    // Evaluasi antrean/booking & sinkronisasi antar-tab setiap 2 detik
+    const syncInterval = window.setInterval(() => {
       if (!isOfflineRef.current) {
-        const synced = barberService.syncAndGetState();
-        setDbState(synced);
-        setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(synced)));
+        syncStateFromStorage();
       }
     }, 2000);
 
@@ -103,82 +119,92 @@ export function useBarberStore() {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('storage', handleStorage);
-      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.clearInterval(clockInterval);
+      window.clearInterval(syncInterval);
     };
-  }, [refreshFromStore]);
+  }, [syncStateFromStorage]);
 
-  const effectiveNowMs = useMemo(
-    () => getEffectiveNowMs(dbState),
-    [dbState]
-  );
+  const shopStatus = useMemo(() => getShopOperationalStatus(nowMs), [nowMs]);
+  const todayStr = shopStatus.todayStr;
+  const operationalDayKey = shopStatus.operationalDayKey;
 
-  const todayStr = useMemo(
-    () => formatDateYYYYMMDD(new Date(effectiveNowMs)),
-    [effectiveNowMs]
+  const liveClockText = useMemo(
+    () => formatLiveClockBannerWib(nowMs),
+    [nowMs]
   );
 
   const currentClockHHMM = useMemo(
-    () => formatTimeHHMM(effectiveNowMs),
-    [effectiveNowMs]
+    () => getWibParts(nowMs).hhmm,
+    [nowMs]
   );
 
   const todayQuota = useMemo(
-    () => barberService.getQuotaForDate(dbState, todayStr),
-    [dbState, todayStr]
+    () => barberService.getQuotaForOperationalDay(dbState, operationalDayKey),
+    [dbState, operationalDayKey]
+  );
+
+  const activePromos: Promo[] = useMemo(
+    () => barberService.getActivePromos(dbState, nowMs),
+    [dbState, nowMs]
   );
 
   const queueEstimation: QueueEstimationSummary = useMemo(
-    () => barberService.getQueueEstimation(dbState, todayStr),
-    [dbState, todayStr]
+    () => barberService.getQueueEstimation(dbState, operationalDayKey),
+    [dbState, operationalDayKey]
   );
 
   const currentCustomer: Customer | null = useMemo(() => {
-    if (!customerSessionId) return null;
+    if (sessionRole !== 'pelanggan' || !customerSessionId) return null;
     return dbState.customers.find((c) => c.id === customerSessionId) || null;
-  }, [dbState.customers, customerSessionId]);
-
-  const activeCustomerWalkin: DataAntreanWalkin | null = useMemo(() => {
-    if (currentCustomer) {
-      const custWalkins = dbState.walkinQueue
-        .filter(
-          (w) => w.customerId === currentCustomer.id && w.tanggal === todayStr
-        )
-        .sort((a, b) => b.waktuAmbil - a.waktuAmbil);
-      const active = custWalkins.find(
-        (w) => w.status === 'Waiting' || w.status === 'In-Service'
-      );
-      if (active) return active;
-      if (custWalkins[0]) return custWalkins[0];
-    }
-    if (!activeWalkinId) return null;
-    return (
-      dbState.walkinQueue.find((w) => w.id === activeWalkinId) || null
-    );
-  }, [dbState.walkinQueue, activeWalkinId, currentCustomer, todayStr]);
-
-  const activeCustomerBooking: DataBooking | null = useMemo(() => {
-    if (currentCustomer) {
-      const custBookings = dbState.bookings
-        .filter((b) => b.customerId === currentCustomer.id)
-        .sort((a, b) => b.waktuDibuat - a.waktuDibuat);
-      const active = custBookings.find(
-        (b) => b.status === 'Booked' || b.status === 'In-Service'
-      );
-      if (active) return active;
-      if (custBookings[0]) return custBookings[0];
-    }
-    if (!activeBookingCode) return null;
-    return (
-      dbState.bookings.find((b) => b.kodeTiket === activeBookingCode) || null
-    );
-  }, [dbState.bookings, activeBookingCode, currentCustomer]);
+  }, [sessionRole, dbState.customers, customerSessionId]);
 
   const loggedInCapster: Capster | null = useMemo(() => {
-    if (!loggedInCapsterId) return null;
+    if (sessionRole !== 'capster' || !loggedInCapsterId) return null;
     return dbState.capsters.find((c) => c.id === loggedInCapsterId) || null;
-  }, [dbState.capsters, loggedInCapsterId]);
+  }, [sessionRole, dbState.capsters, loggedInCapsterId]);
 
-  // Customer Auth Actions
+  const capsterProfile: CapsterProfile = useMemo(
+    () => dbState.capsterProfile || getInitialCapsterProfile(),
+    [dbState.capsterProfile]
+  );
+
+  const activeCustomerWalkin: DataAntreanWalkin | null = useMemo(() => {
+    if (!currentCustomer) return null;
+    const custWalkins = dbState.walkinQueue
+      .filter(
+        (w) =>
+          w.customerId === currentCustomer.id &&
+          (w.kunciHariOperasional || w.tanggal) === operationalDayKey
+      )
+      .sort((a, b) => b.waktuAmbil - a.waktuAmbil);
+    return (
+      custWalkins.find(
+        (w) => w.status === 'Waiting' || w.status === 'In-Service'
+      ) ||
+      custWalkins[0] ||
+      null
+    );
+  }, [dbState.walkinQueue, currentCustomer, operationalDayKey]);
+
+  const activeCustomerBooking: DataBooking | null = useMemo(() => {
+    if (!currentCustomer) return null;
+    const custBookings = dbState.bookings
+      .filter((b) => b.customerId === currentCustomer.id)
+      .sort((a, b) => b.waktuDibuat - a.waktuDibuat);
+    return (
+      custBookings.find(
+        (b) => b.status === 'Booked' || b.status === 'In-Service'
+      ) ||
+      custBookings[0] ||
+      null
+    );
+  }, [dbState.bookings, currentCustomer]);
+
+  // =========================================================================
+  // CUSTOMER AUTH ACTIONS
+  // =========================================================================
+
   const registerCustomer = useCallback(
     (params: {
       nama: string;
@@ -190,8 +216,10 @@ export function useBarberStore() {
       const res = barberService.registerCustomer(params);
       if (res.ok && res.data) {
         setDbState(res.data.state);
+        setSessionRole('pelanggan');
         setCustomerSessionId(res.data.customer.id);
-        setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(res.data.state)));
+        setLoggedInCapsterId(null);
+        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
       }
       return res;
     },
@@ -203,27 +231,20 @@ export function useBarberStore() {
       const res = barberService.loginCustomer(nomorWhatsApp, password);
       if (res.ok && res.data) {
         setDbState(res.data.state);
+        setSessionRole('pelanggan');
         setCustomerSessionId(res.data.customer.id);
-        setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(res.data.state)));
+        setLoggedInCapsterId(null);
+        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
       }
       return res;
     },
     []
   );
 
-  const loginDemoCustomer = useCallback((customerId: string) => {
-    const res = barberService.loginDemoCustomerById(customerId);
-    if (res.ok && res.data) {
-      setDbState(res.data.state);
-      setCustomerSessionId(res.data.customer.id);
-      setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(res.data.state)));
-    }
-    return res;
-  }, []);
-
   const logoutCustomer = useCallback(() => {
     barberService.logoutCustomer();
     setCustomerSessionId(null);
+    setSessionRole((prev) => (prev === 'pelanggan' ? null : prev));
   }, []);
 
   const updateCustomerProfile = useCallback(
@@ -247,7 +268,7 @@ export function useBarberStore() {
       );
       if (res.ok && res.data) {
         setDbState(res.data.state);
-        setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(res.data.state)));
+        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
       }
       return res;
     },
@@ -266,19 +287,18 @@ export function useBarberStore() {
     if (res.ok && res.data) {
       setDbState(res.data);
       setCustomerSessionId(null);
-      setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(res.data)));
+      setSessionRole(null);
+      setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
     }
     return res;
   }, [customerSessionId]);
 
-  // Queue & Booking Actions
+  // =========================================================================
+  // CUSTOMER QUEUE & BOOKING ACTIONS
+  // =========================================================================
+
   const takeWalkinQueue = useCallback(
-    (params: {
-      customerId?: string;
-      namaPelanggan?: string;
-      nomorWhatsApp?: string;
-      capsterId?: string;
-    }) => {
+    (params: { customerId?: string; capsterId?: string }) => {
       if (isOfflineRef.current) {
         return {
           ok: false,
@@ -288,17 +308,18 @@ export function useBarberStore() {
         };
       }
       const res = barberService.takeWalkinQueue({
-        ...params,
         customerId: params.customerId || customerSessionId || undefined,
+        capsterId: params.capsterId,
       });
       if (res.ok && res.data) {
         setDbState(res.data.state);
-        setActiveWalkinId(res.data.ticket.id);
-        setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(res.data.state)));
+        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
+      } else {
+        syncStateFromStorage();
       }
       return res;
     },
-    [customerSessionId]
+    [customerSessionId, syncStateFromStorage]
   );
 
   const cancelCustomerWalkin = useCallback(
@@ -316,7 +337,7 @@ export function useBarberStore() {
       );
       if (res.ok && res.data) {
         setDbState(res.data);
-        setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(res.data)));
+        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
       }
       return res;
     },
@@ -329,8 +350,7 @@ export function useBarberStore() {
       capsterId: string;
       tanggal: string;
       jamSlot: string;
-      nama: string;
-      nomorWhatsApp: string;
+      selectedServices?: SelectedServiceInput[];
     }) => {
       if (isOfflineRef.current) {
         return {
@@ -346,14 +366,13 @@ export function useBarberStore() {
       });
       if (res.ok && res.data) {
         setDbState(res.data.state);
-        setActiveBookingCode(res.data.booking.kodeTiket);
-        setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(res.data.state)));
+        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
       } else {
-        refreshFromStore();
+        syncStateFromStorage();
       }
       return res;
     },
-    [refreshFromStore, customerSessionId]
+    [customerSessionId, syncStateFromStorage]
   );
 
   const rescheduleBooking = useCallback(
@@ -383,13 +402,13 @@ export function useBarberStore() {
       });
       if (res.ok && res.data) {
         setDbState(res.data.state);
-        setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(res.data.state)));
+        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
       } else {
-        refreshFromStore();
+        syncStateFromStorage();
       }
       return res;
     },
-    [customerSessionId, refreshFromStore]
+    [customerSessionId, syncStateFromStorage]
   );
 
   const cancelCustomerBooking = useCallback(
@@ -407,19 +426,42 @@ export function useBarberStore() {
       );
       if (res.ok && res.data) {
         setDbState(res.data);
-        setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(res.data)));
+        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
       }
       return res;
     },
     [customerSessionId]
   );
 
+  // =========================================================================
+  // CAPSTER AUTH & DASHBOARD ACTIONS (ROLE-PROTECTED)
+  // =========================================================================
+
+  const loginCapster = useCallback(
+    (username: string, password: string): ServiceResult<Capster> => {
+      const res = barberService.loginCapster(username, password);
+      if (res.ok && res.data) {
+        setSessionRole('capster');
+        setLoggedInCapsterId(res.data.id);
+        setCustomerSessionId(null);
+      }
+      return res;
+    },
+    []
+  );
+
+  const logoutCapster = useCallback(() => {
+    barberService.logoutCapster();
+    setLoggedInCapsterId(null);
+    setSessionRole((prev) => (prev === 'capster' ? null : prev));
+  }, []);
+
   const callWalkin = useCallback(
-    (walkinId: string, capsterId: string): ServiceResult<BarberDatabaseState> => {
+    (walkinId: string, capsterId?: string): ServiceResult<BarberDatabaseState> => {
       const res = barberService.callWalkin(walkinId, capsterId);
       if (res.ok && res.data) {
         setDbState(res.data);
-        setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(res.data)));
+        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
       }
       return res;
     },
@@ -431,167 +473,253 @@ export function useBarberStore() {
       walkinId: string,
       overrideDurationMinutes?: number
     ): ServiceResult<BarberDatabaseState> => {
-      const res = barberService.completeWalkin(walkinId, overrideDurationMinutes);
+      const res = barberService.completeWalkin(
+        walkinId,
+        overrideDurationMinutes
+      );
       if (res.ok && res.data) {
         setDbState(res.data);
-        setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(res.data)));
+        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
       }
       return res;
     },
     []
   );
 
-  const cancelWalkin = useCallback((walkinId: string) => {
-    const res = barberService.cancelWalkin(walkinId);
-    if (res.ok && res.data) {
-      setDbState(res.data);
-      setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(res.data)));
-    }
-    return res;
-  }, []);
+  const cancelWalkin = useCallback(
+    (walkinId: string): ServiceResult<BarberDatabaseState> => {
+      const res = barberService.cancelWalkin(walkinId);
+      if (res.ok && res.data) {
+        setDbState(res.data);
+        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
+      }
+      return res;
+    },
+    []
+  );
 
-  const startBookingService = useCallback((bookingId: string) => {
-    const res = barberService.startBookingService(bookingId);
-    if (res.ok && res.data) {
-      setDbState(res.data);
-      setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(res.data)));
-    }
-    return res;
-  }, []);
+  const startBookingService = useCallback(
+    (bookingId: string): ServiceResult<BarberDatabaseState> => {
+      const res = barberService.startBookingService(bookingId);
+      if (res.ok && res.data) {
+        setDbState(res.data);
+        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
+      }
+      return res;
+    },
+    []
+  );
 
   const completeBooking = useCallback(
-    (bookingId: string, overrideDurationMinutes?: number) => {
-      const res = barberService.completeBooking(bookingId, overrideDurationMinutes);
+    (
+      bookingId: string,
+      overrideDurationMinutes?: number
+    ): ServiceResult<BarberDatabaseState> => {
+      const res = barberService.completeBooking(
+        bookingId,
+        overrideDurationMinutes
+      );
       if (res.ok && res.data) {
         setDbState(res.data);
-        setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(res.data)));
+        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
       }
       return res;
     },
     []
   );
 
-  const cancelBookingManual = useCallback((bookingId: string) => {
-    const res = barberService.cancelBookingManual(bookingId);
-    if (res.ok && res.data) {
-      setDbState(res.data);
-      setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(res.data)));
-    }
-    return res;
-  }, []);
+  const cancelBookingManual = useCallback(
+    (bookingId: string): ServiceResult<BarberDatabaseState> => {
+      const res = barberService.cancelBookingManual(bookingId);
+      if (res.ok && res.data) {
+        setDbState(res.data);
+        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
+      }
+      return res;
+    },
+    []
+  );
 
-  const updateDailyQuota = useCallback((tanggal: string, maxQuota: number) => {
-    const next = barberService.updateDailyQuota(tanggal, maxQuota);
-    setDbState(next);
-    setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(next)));
-  }, []);
+  const updateDailyQuota = useCallback(
+    (
+      targetOperationalDayKey: string,
+      maxQuota: number
+    ): ServiceResult<BarberDatabaseState> => {
+      const res = barberService.updateDailyQuota(
+        targetOperationalDayKey,
+        maxQuota
+      );
+      if (res.ok && res.data) {
+        setDbState(res.data);
+        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
+      }
+      return res;
+    },
+    []
+  );
 
-  const updateCapsterSchedule = useCallback(
+  const setCapsterDayOff = useCallback(
     (params: {
       capsterId: string;
       tanggal: string;
-      buka: string;
-      tutup: string;
       isLibur: boolean;
       alasanLibur?: string;
-      slotPenuhManual?: string[];
-      applyHoursAsDefault?: boolean;
-    }) => {
-      const next = barberService.updateCapsterSchedule(params);
-      setDbState(next);
-      setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(next)));
-    },
-    []
-  );
-
-  const toggleManualFullSlot = useCallback(
-    (capsterId: string, tanggal: string, jam: string) => {
-      const next = barberService.toggleManualFullSlot(capsterId, tanggal, jam);
-      setDbState(next);
-      setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(next)));
-    },
-    []
-  );
-
-  const advanceSimulatedMinutes = useCallback((minutes: number) => {
-    const next = barberService.advanceSimulatedMinutes(minutes);
-    setDbState(next);
-    setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(next)));
-  }, []);
-
-  const toggleUseRealClock = useCallback((useReal: boolean) => {
-    const next = barberService.toggleUseRealClock(useReal);
-    setDbState(next);
-    setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(next)));
-  }, []);
-
-  const resetDemoData = useCallback(() => {
-    const seed = barberService.resetDemoData();
-    setDbState(seed);
-    setCustomerSessionId(null);
-    setActiveWalkinId(null);
-    setActiveBookingCode(null);
-    setSimulateOffline(false);
-    setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(seed)));
-  }, []);
-
-  const loginCapster = useCallback(
-    (username: string, pin: string): ServiceResult<Capster> => {
-      const found = dbState.capsters.find(
-        (c) =>
-          c.username.toLowerCase() === username.trim().toLowerCase() &&
-          c.pin === pin.trim()
-      );
-      if (!found) {
-        return {
-          ok: false,
-          errorCode: 'VALIDATION_ERROR',
-          message: 'Username atau PIN tidak cocok. Gunakan PIN demo: 1234.',
-        };
+      forceCancelConflicts?: boolean;
+    }): ServiceResult<BarberDatabaseState> => {
+      const res = barberService.setCapsterDayOff(params);
+      if (res.ok && res.data) {
+        setDbState(res.data);
+        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
       }
-      barberService.setCapsterSession(found.id);
-      setLoggedInCapsterId(found.id);
-      return { ok: true, data: found };
+      return res;
     },
-    [dbState.capsters]
+    []
   );
 
-  const logoutCapster = useCallback(() => {
-    barberService.setCapsterSession(null);
-    setLoggedInCapsterId(null);
-  }, []);
+  const setCapsterSlotManual = useCallback(
+    (params: {
+      capsterId: string;
+      tanggal: string;
+      jam: string;
+      mode: 'tersedia' | 'tidak_tersedia' | 'terisi_manual';
+      catatan?: string;
+      forceCancelConflict?: boolean;
+    }): ServiceResult<BarberDatabaseState> => {
+      const res = barberService.setCapsterSlotManual(params);
+      if (res.ok && res.data) {
+        setDbState(res.data);
+        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
+      }
+      return res;
+    },
+    []
+  );
 
-  const trackBookingCode = useCallback((code: string) => {
-    const normalized = code.trim().toUpperCase();
-    barberService.setCustomerBookingCode(normalized);
-    setActiveBookingCode(normalized);
-  }, []);
+  const createPromo = useCallback(
+    (params: {
+      judul: string;
+      deskripsi: string;
+      layananId: string[];
+      diskonMin: number;
+      diskonMax: number;
+      aktif: boolean;
+      berlakuDari?: string;
+      berlakuSampai?: string;
+    }): ServiceResult<BarberDatabaseState> => {
+      const res = barberService.createPromo(params);
+      if (res.ok && res.data) {
+        setDbState(res.data);
+        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
+      }
+      return res;
+    },
+    []
+  );
 
-  const trackWalkinId = useCallback((id: string) => {
-    barberService.setCustomerWalkinId(id);
-    setActiveWalkinId(id);
-  }, []);
+  const updatePromo = useCallback(
+    (
+      promoId: string,
+      params: {
+        judul: string;
+        deskripsi: string;
+        layananId: string[];
+        diskonMin: number;
+        diskonMax: number;
+        aktif: boolean;
+        berlakuDari?: string;
+        berlakuSampai?: string;
+      }
+    ): ServiceResult<BarberDatabaseState> => {
+      const res = barberService.updatePromo(promoId, params);
+      if (res.ok && res.data) {
+        setDbState(res.data);
+        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
+      }
+      return res;
+    },
+    []
+  );
+
+  const togglePromoActive = useCallback(
+    (promoId: string): ServiceResult<BarberDatabaseState> => {
+      const res = barberService.togglePromoActive(promoId);
+      if (res.ok && res.data) {
+        setDbState(res.data);
+        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
+      }
+      return res;
+    },
+    []
+  );
+
+  const deletePromo = useCallback(
+    (promoId: string): ServiceResult<BarberDatabaseState> => {
+      const res = barberService.deletePromo(promoId);
+      if (res.ok && res.data) {
+        setDbState(res.data);
+        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
+      }
+      return res;
+    },
+    []
+  );
+
+  const updateCapsterProfile = useCallback(
+    (params: {
+      pengalaman: string;
+      nomorWhatsApp: string;
+      instagramCapster: string;
+      instagramBarbershop: string;
+    }): ServiceResult<BarberDatabaseState> => {
+      const res = barberService.updateCapsterProfile(params);
+      if (res.ok && res.data) {
+        setDbState(res.data);
+        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
+      }
+      return res;
+    },
+    []
+  );
+
+  const changeCapsterPassword = useCallback(
+    (params: {
+      currentPassword: string;
+      newPassword: string;
+      confirmPassword: string;
+    }): ServiceResult<BarberDatabaseState> => {
+      const res = barberService.changeCapsterPassword(params);
+      if (res.ok && res.data) {
+        setDbState(res.data);
+        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
+      }
+      return res;
+    },
+    []
+  );
 
   return {
     hydrated,
     dbState,
-    effectiveNowMs,
+    nowMs,
     todayStr,
+    operationalDayKey,
+    shopStatus,
+    liveClockText,
     currentClockHHMM,
     todayQuota,
+    activePromos,
     queueEstimation,
+    sessionRole,
     currentCustomer,
+    loggedInCapster,
+    capsterProfile,
     activeCustomerWalkin,
     activeCustomerBooking,
-    loggedInCapster,
     isOffline,
-    simulateOffline,
-    setSimulateOffline,
     lastSyncedFormatted,
-    refreshFromStore,
+    refreshFromStore: syncStateFromStorage,
     registerCustomer,
     loginCustomer,
-    loginDemoCustomer,
     logoutCustomer,
     updateCustomerProfile,
     deleteCustomerAccount,
@@ -600,6 +728,8 @@ export function useBarberStore() {
     createBooking,
     rescheduleBooking,
     cancelCustomerBooking,
+    loginCapster,
+    logoutCapster,
     callWalkin,
     completeWalkin,
     cancelWalkin,
@@ -607,14 +737,13 @@ export function useBarberStore() {
     completeBooking,
     cancelBookingManual,
     updateDailyQuota,
-    updateCapsterSchedule,
-    toggleManualFullSlot,
-    advanceSimulatedMinutes,
-    toggleUseRealClock,
-    resetDemoData,
-    loginCapster,
-    logoutCapster,
-    trackBookingCode,
-    trackWalkinId,
+    setCapsterDayOff,
+    setCapsterSlotManual,
+    createPromo,
+    updatePromo,
+    togglePromoActive,
+    deletePromo,
+    updateCapsterProfile,
+    changeCapsterPassword,
   };
 }

@@ -21,9 +21,10 @@ import {
   barberService,
   formatDateIndo,
   formatShortDateIndo,
-  formatTimeHHMM,
+  formatTimeWibHHMM,
   parseSlotEpochMs,
 } from '@/lib/barber-service';
+import { formatRupiahRange } from '@/lib/services-catalog';
 import {
   AppView,
   BarberDatabaseState,
@@ -38,7 +39,8 @@ import { StatusIndicator } from './StatusIndicator';
 interface MyQueueViewProps {
   dbState: BarberDatabaseState;
   todayStr: string;
-  effectiveNowMs: number;
+  operationalDayKey: string;
+  nowMs: number;
   queueEstimation: QueueEstimationSummary;
   currentCustomer: Customer;
   isOffline: boolean;
@@ -58,7 +60,8 @@ interface MyQueueViewProps {
 export function MyQueueView({
   dbState,
   todayStr,
-  effectiveNowMs,
+  operationalDayKey,
+  nowMs,
   queueEstimation,
   currentCustomer,
   isOffline,
@@ -69,6 +72,8 @@ export function MyQueueView({
   onCancelBooking,
   onNavigate,
 }: MyQueueViewProps) {
+  const defaultCapsterId = dbState.capsters[0]?.id || 'hasan';
+
   const [confirmCancelWalkinId, setConfirmCancelWalkinId] = useState<
     string | null
   >(null);
@@ -77,7 +82,8 @@ export function MyQueueView({
   >(null);
   const [reschedulingBooking, setReschedulingBooking] =
     useState<DataBooking | null>(null);
-  const [reschedCapsterId, setReschedCapsterId] = useState<string>('hasan');
+  const [reschedCapsterId, setReschedCapsterId] =
+    useState<string>(defaultCapsterId);
   const [reschedDate, setReschedDate] = useState<string>(todayStr);
   const [reschedSlot, setReschedSlot] = useState<string>('');
   const [actionMsg, setActionMsg] = useState<{
@@ -86,15 +92,15 @@ export function MyQueueView({
   } | null>(null);
 
   const getCapsterName = (id?: string) => {
-    if (!id) return 'Capster tersedia';
+    if (!id) return 'Hasan';
     return dbState.capsters.find((c) => c.id === id)?.nama || id;
   };
 
-  // Walk-in aktif milik pelanggan hari ini
+  // Walk-in aktif milik pelanggan pada sesi operasional aktif
   const myActiveWalkin = dbState.walkinQueue.find(
     (w) =>
       w.customerId === currentCustomer.id &&
-      w.tanggal === todayStr &&
+      (w.kunciHariOperasional || w.tanggal) === operationalDayKey &&
       (w.status === 'Waiting' || w.status === 'In-Service')
   );
 
@@ -109,22 +115,25 @@ export function MyQueueView({
       `${a.tanggal}_${a.jamSlot}`.localeCompare(`${b.tanggal}_${b.jamSlot}`)
     );
 
-  // Notifikasi booking yang dibatalkan otomatis karena telat > 15 menit
-  const myAutoCanceledBookings = dbState.bookings
+  // Notifikasi booking yang dibatalkan otomatis atau karena capster tidak tersedia
+  const myNotifiedCanceledBookings = dbState.bookings
     .filter(
       (b) =>
         b.customerId === currentCustomer.id &&
         b.status === 'Canceled' &&
-        b.alasanBatal === 'otomatis'
+        (b.alasanBatal === 'otomatis' ||
+          b.alasanBatal === 'capster_tidak_tersedia')
     )
     .sort((a, b) => b.waktuDibuat - a.waktuDibuat);
 
-  // Riwayat (Selesai / Canceled)
+  // Riwayat (Selesai / Canceled / Kedaluwarsa)
   const myWalkinHistory = dbState.walkinQueue
     .filter(
       (w) =>
         w.customerId === currentCustomer.id &&
-        (w.status === 'Selesai' || w.status === 'Canceled')
+        (w.status === 'Selesai' ||
+          w.status === 'Canceled' ||
+          w.status === 'Kedaluwarsa')
     )
     .sort((a, b) => b.waktuAmbil - a.waktuAmbil);
 
@@ -136,21 +145,24 @@ export function MyQueueView({
     )
     .sort((a, b) => b.waktuDibuat - a.waktuDibuat);
 
-  // Posisi walk-in
+  // Posisi & Estimasi walk-in (termasuk sisa waktu pelanggan In-Service)
   const waitingPosIndex = myActiveWalkin
     ? queueEstimation.waitingList.findIndex((w) => w.id === myActiveWalkin.id)
     : -1;
   const antreanDiDepan = waitingPosIndex >= 0 ? waitingPosIndex : 0;
   const posisiSaatIni = waitingPosIndex >= 0 ? waitingPosIndex + 1 : 0;
-  const estimasiMenit = antreanDiDepan * queueEstimation.rataRataDurasiMenit;
+  const estimasiMenit =
+    queueEstimation.sisaWaktuInServiceMenit +
+    antreanDiDepan * queueEstimation.rataRataDurasiMenit;
 
-  const sedangDipanggil =
-    queueEstimation.sedangDilayaniWalkin[0]?.nomorAntrean || 'Belum ada';
+  const primaryInService = queueEstimation.inServiceDetails[0];
+  const sedangDipanggil = primaryInService
+    ? `${primaryInService.kodeAtauNomor} (${primaryInService.namaTersamarkan})`
+    : 'Belum ada';
 
-  // Hitung mundur menuju jam slot
   const formatCountdown = (tanggal: string, jamSlot: string) => {
     const slotMs = parseSlotEpochMs(tanggal, jamSlot);
-    const diffMin = Math.round((slotMs - effectiveNowMs) / 60_000);
+    const diffMin = Math.round((slotMs - nowMs) / 60_000);
     if (diffMin > 60) {
       const jam = Math.floor(diffMin / 60);
       const sisa = diffMin % 60;
@@ -169,12 +181,12 @@ export function MyQueueView({
   const canReschedule = (b: DataBooking) => {
     if (b.status !== 'Booked') return false;
     const slotMs = parseSlotEpochMs(b.tanggal, b.jamSlot);
-    return effectiveNowMs <= slotMs - 60 * 60_000;
+    return nowMs <= slotMs - 60 * 60_000;
   };
 
   const openReschedulePicker = (b: DataBooking) => {
     setReschedulingBooking(b);
-    setReschedCapsterId(b.capsterId);
+    setReschedCapsterId(b.capsterId || defaultCapsterId);
     setReschedDate(b.tanggal >= todayStr ? b.tanggal : todayStr);
     setReschedSlot('');
     setActionMsg(null);
@@ -207,10 +219,18 @@ export function MyQueueView({
   const dateOptions = Array.from({ length: 7 }, (_, i) =>
     addDaysYYYYMMDD(todayStr, i)
   );
+  const effectiveReschedDate =
+    reschedDate >= todayStr ? reschedDate : todayStr;
+  const reschedSlotsNeeded = reschedulingBooking
+    ? reschedulingBooking.durasiTotalMenit
+      ? Math.max(1, Math.ceil(reschedulingBooking.durasiTotalMenit / 60))
+      : reschedulingBooking.slotTercakup?.length || 1
+    : 1;
   const reschedSchedule = barberService.getComputedSlots(
     dbState,
     reschedCapsterId,
-    reschedDate
+    effectiveReschedDate,
+    reschedulingBooking?.id
   );
 
   return (
@@ -291,25 +311,64 @@ export function MyQueueView({
         </div>
       )}
 
-      {/* Notifikasi Pembatalan Otomatis (>15 menit) */}
-      {myAutoCanceledBookings.length > 0 && (
+      {/* Notifikasi Pembatalan Booking Otomatis / Capster Tidak Tersedia */}
+      {myNotifiedCanceledBookings.length > 0 && (
         <div className="p-4 sm:p-5 rounded-xl bg-rose-950/40 border border-rose-500/40 space-y-2">
           <div className="flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
             <div className="space-y-1 text-sm">
               <p className="font-semibold text-rose-200">
-                Pemberitahuan Pembatalan Otomatis ({myAutoCanceledBookings[0].kodeTiket})
+                Pemberitahuan Pembatalan Booking (
+                {myNotifiedCanceledBookings[0].kodeTiket})
               </p>
               <p className="text-xs text-rose-100/85 leading-relaxed">
-                Booking Anda pada{' '}
-                {formatShortDateIndo(myAutoCanceledBookings[0].tanggal)} pukul{' '}
-                {myAutoCanceledBookings[0].jamSlot} WIB dibatalkan otomatis
-                karena melewati toleransi keterlambatan 15 menit. Slot telah
-                dibuka kembali.
+                {myNotifiedCanceledBookings[0].alasanBatal ===
+                'capster_tidak_tersedia'
+                  ? `Booking Anda pada ${formatShortDateIndo(
+                      myNotifiedCanceledBookings[0].tanggal
+                    )} pukul ${
+                      myNotifiedCanceledBookings[0].jamSlot
+                    } WIB dibatalkan karena capster berhalangan (${
+                      myNotifiedCanceledBookings[0].catatanBatal ||
+                      'Tidak tersedia'
+                    }). Silakan pilih jadwal lain.`
+                  : `Booking Anda pada ${formatShortDateIndo(
+                      myNotifiedCanceledBookings[0].tanggal
+                    )} pukul ${
+                      myNotifiedCanceledBookings[0].jamSlot
+                    } WIB dibatalkan otomatis karena melewati toleransi keterlambatan 15 menit.`}
               </p>
             </div>
           </div>
         </div>
+      )}
+
+      {/* Ringkasan Pelanggan Sedang Dilayani (Privasi Tersamarkan) */}
+      {queueEstimation.inServiceDetails.length > 0 && (
+        <section className="p-4 sm:p-5 rounded-2xl bg-sky-950/20 border border-sky-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <Scissors className="w-5 h-5 text-sky-400 shrink-0 mt-0.5" />
+            <div className="text-xs sm:text-sm space-y-0.5">
+              <p className="font-semibold text-sky-200">
+                Sedang Dilayani Saat Ini:{' '}
+                <span className="font-mono">
+                  {queueEstimation.inServiceDetails[0].kodeAtauNomor}
+                </span>{' '}
+                ({queueEstimation.inServiceDetails[0].namaTersamarkan})
+              </p>
+              <p className="text-zinc-400 font-mono tabular-nums text-xs">
+                Mulai pukul {queueEstimation.inServiceDetails[0].jamMulaiHHMM}{' '}
+                WIB · Berjalan{' '}
+                {queueEstimation.inServiceDetails[0].lamaBerjalanMenit} mnt ·{' '}
+                <span className="text-sky-300 font-semibold">
+                  {queueEstimation.inServiceDetails[0].melebihiEstimasi
+                    ? 'Hampir selesai / melebihi estimasi'
+                    : `Sisa estimasi ±${queueEstimation.inServiceDetails[0].estimasiSisaMenit} mnt`}
+                </span>
+              </p>
+            </div>
+          </div>
+        </section>
       )}
 
       {/* A. KARTU ANTREAN WALK-IN AKTIF */}
@@ -320,7 +379,6 @@ export function MyQueueView({
 
         {myActiveWalkin ? (
           <div className="p-5 sm:p-6 rounded-2xl bg-[#131317] border border-amber-500/40 space-y-5">
-            {/* Notifikasi khusus hampir tiba (<= 2 antrean di depan) / dipanggil */}
             {myActiveWalkin.status === 'In-Service' && (
               <div className="p-4 rounded-xl bg-sky-500/15 border border-sky-400/50 flex items-center gap-3 text-sky-200">
                 <Scissors className="w-5 h-5 text-sky-300 shrink-0" />
@@ -364,8 +422,8 @@ export function MyQueueView({
               </div>
 
               <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800">
-                <p className="text-xs text-zinc-400">Sedang Dipanggil</p>
-                <p className="font-mono tabular-nums text-2xl font-bold text-sky-300 mt-1">
+                <p className="text-xs text-zinc-400">Sedang Dilayani</p>
+                <p className="font-mono tabular-nums text-lg sm:text-xl font-bold text-sky-300 mt-1 truncate">
                   {sedangDipanggil}
                 </p>
                 <p className="text-[11px] text-zinc-500 mt-1">
@@ -396,7 +454,7 @@ export function MyQueueView({
                 </p>
                 <p className="text-[11px] text-zinc-500 mt-1 font-mono tabular-nums">
                   {myActiveWalkin.status === 'Waiting'
-                    ? `${antreanDiDepan} × ${queueEstimation.rataRataDurasiMenit} mnt`
+                    ? `${queueEstimation.sisaWaktuInServiceMenit} + (${antreanDiDepan} × ${queueEstimation.rataRataDurasiMenit})`
                     : 'Giliran Anda'}
                 </p>
               </div>
@@ -404,7 +462,7 @@ export function MyQueueView({
 
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-zinc-800">
               <p className="text-xs text-zinc-400 font-mono tabular-nums">
-                Diambil pukul {formatTimeHHMM(myActiveWalkin.waktuAmbil)} WIB ·{' '}
+                Diambil pukul {formatTimeWibHHMM(myActiveWalkin.waktuAmbil)} WIB ·{' '}
                 {queueEstimation.menggunakanDefault
                   ? 'Menggunakan rata-rata standar 45 mnt'
                   : `Rata-rata ${queueEstimation.rataRataDurasiMenit} mnt dari ${queueEstimation.jumlahSelesaiHariIni} layanan selesai`}
@@ -503,8 +561,7 @@ export function MyQueueView({
                 Belum ada booking aktif atau mendatang
               </p>
               <p className="text-xs text-zinc-400">
-                Pilih slot kosong capster favorit Anda agar tidak perlu antre
-                di tempat.
+                Pilih slot kosong capster agar tidak perlu antre di tempat.
               </p>
             </div>
             <button
@@ -570,6 +627,35 @@ export function MyQueueView({
                       </div>
                     </div>
                   </div>
+
+                  {b.layananDipilih && b.layananDipilih.length > 0 && (
+                    <div className="p-3.5 rounded-xl bg-zinc-900/75 border border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                      <div className="text-zinc-300">
+                        <span className="text-zinc-400">Layanan: </span>
+                        <span className="font-medium text-stone-100">
+                          {b.layananDipilih
+                            .map((l) =>
+                              l.qty > 1 ? `${l.nama} (×${l.qty})` : l.nama
+                            )
+                            .join(', ')}
+                        </span>
+                        {b.durasiTotalMenit && (
+                          <span className="text-zinc-400 font-mono ml-1.5">
+                            (±{b.durasiTotalMenit} mnt)
+                          </span>
+                        )}
+                      </div>
+                      {typeof b.totalEstimasiMin === 'number' && (
+                        <span className="font-mono tabular-nums font-semibold text-amber-300 whitespace-nowrap">
+                          Estimasi:{' '}
+                          {formatRupiahRange(
+                            b.totalEstimasiMin,
+                            b.totalEstimasiMax ?? b.totalEstimasiMin
+                          )}
+                        </span>
+                      )}
+                    </div>
+                  )}
 
                   {b.status === 'Booked' && (
                     <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
@@ -640,7 +726,7 @@ export function MyQueueView({
         )}
       </section>
 
-      {/* PANEL UBAH JADWAL (RESCHEDULE PICKER) */}
+      {/* PANEL UBAH JADWAL */}
       {reschedulingBooking && (
         <section className="p-5 sm:p-6 rounded-2xl bg-[#16161C] border border-amber-400/50 space-y-5">
           <div className="flex items-start justify-between gap-4 border-b border-zinc-800 pb-4">
@@ -666,7 +752,13 @@ export function MyQueueView({
             </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+          <div
+            className={`grid gap-2.5 ${
+              dbState.capsters.length === 1
+                ? 'grid-cols-1 max-w-sm'
+                : 'grid-cols-1 sm:grid-cols-3'
+            }`}
+          >
             {dbState.capsters.map((c) => {
               const active = c.id === reschedCapsterId;
               return (
@@ -686,7 +778,7 @@ export function MyQueueView({
                   <CapsterAvatar
                     fotoKey={c.fotoKey}
                     nama={c.nama}
-                    sizeClass="w-9 h-9"
+                    widthClass="w-9"
                   />
                   <div>
                     <p className="text-xs font-semibold text-stone-100">
@@ -701,7 +793,7 @@ export function MyQueueView({
 
           <div className="flex gap-2 overflow-x-auto pb-1">
             {dateOptions.map((dt, idx) => {
-              const active = dt === reschedDate;
+              const active = dt === effectiveReschedDate;
               return (
                 <button
                   key={dt}
@@ -736,7 +828,12 @@ export function MyQueueView({
           ) : (
             <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
               {reschedSchedule.slots.map((slot) => {
-                const isAvail = slot.status === 'Available';
+                const spanCheck = barberService.canStartSlotFitDuration(
+                  reschedSchedule.slots,
+                  slot.jam,
+                  reschedSlotsNeeded
+                );
+                const isAvail = slot.status === 'Available' && spanCheck.ok;
                 const isSelected = reschedSlot === slot.jam && isAvail;
                 return (
                   <button
@@ -752,9 +849,15 @@ export function MyQueueView({
                           : 'bg-rose-500/10 border-rose-500/30 text-rose-400/70 cursor-not-allowed'
                     }`}
                   >
-                    <div className="font-mono text-xs font-bold">{slot.jam}</div>
-                    <div className="text-[10px]">
-                      {isSelected ? 'Dipilih' : slot.status}
+                    <div className="font-mono text-xs font-bold">
+                      {slot.jam}
+                    </div>
+                    <div className="text-[10px] truncate">
+                      {isSelected
+                        ? 'Dipilih'
+                        : slot.status === 'Available' && !spanCheck.ok
+                          ? 'Tdk cukup'
+                          : slot.status}
                     </div>
                   </button>
                 );
@@ -790,7 +893,8 @@ export function MyQueueView({
 
         {myWalkinHistory.length === 0 && myBookingHistory.length === 0 ? (
           <div className="p-6 rounded-2xl bg-[#131317] border border-zinc-800/80 text-center text-sm text-zinc-400">
-            Belum ada riwayat layanan yang selesai atau dibatalkan.
+            Belum ada riwayat layanan yang selesai, dibatalkan, atau
+            kedaluwarsa.
           </div>
         ) : (
           <div className="rounded-2xl bg-[#131317] border border-zinc-800/90 divide-y divide-zinc-800/80">
@@ -809,9 +913,12 @@ export function MyQueueView({
                   </p>
                   {b.status === 'Canceled' && (
                     <p className="text-xs text-rose-300 mt-0.5">
-                      {b.alasanBatal === 'otomatis'
-                        ? 'Dibatalkan otomatis (terlambat > 15 menit)'
-                        : 'Dibatalkan'}
+                      {b.catatanBatal ||
+                        (b.alasanBatal === 'otomatis'
+                          ? 'Dibatalkan otomatis (terlambat > 15 menit)'
+                          : b.alasanBatal === 'capster_tidak_tersedia'
+                            ? 'Dibatalkan karena capster tidak tersedia'
+                            : 'Dibatalkan')}
                     </p>
                   )}
                 </div>
@@ -830,7 +937,7 @@ export function MyQueueView({
                   </p>
                   <p className="text-sm font-semibold text-stone-100 mt-0.5">
                     {formatShortDateIndo(w.tanggal)} · Ambil{' '}
-                    {formatTimeHHMM(w.waktuAmbil)} WIB
+                    {formatTimeWibHHMM(w.waktuAmbil)} WIB
                   </p>
                   {w.durasiAktual && (
                     <p className="text-xs text-emerald-400 font-mono mt-0.5">
