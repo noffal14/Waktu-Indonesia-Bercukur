@@ -258,8 +258,8 @@ export function BarberAppShell() {
                       currentCustomer={store.currentCustomer}
                       capsters={store.dbState.capsters}
                       onUpdateProfile={store.updateCustomerProfile}
-                      onDeleteAccount={() => {
-                        const res = store.deleteCustomerAccount();
+                      onDeleteAccount={async () => {
+                        const res = await store.deleteCustomerAccount();
                         if (res.ok) {
                           setCurrentView('beranda');
                           if (viewParam) {
