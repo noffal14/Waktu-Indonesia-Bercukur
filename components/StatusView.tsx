@@ -142,7 +142,7 @@ export function StatusView({
                   : 'bg-[#131317] border-zinc-800 text-zinc-300'
             }`}
           >
-            {syncStatus === 'offline' ? (
+            {isOffline || syncStatus === 'offline' ? (
               <WifiOff className="w-4 h-4 text-rose-400 shrink-0" />
             ) : syncStatus === 'connected' ? (
               <Wifi className="w-4 h-4 text-emerald-400 shrink-0" />
@@ -150,7 +150,7 @@ export function StatusView({
               <RefreshCw className="w-4 h-4 text-amber-300 shrink-0 animate-spin" />
             )}
             <span className="whitespace-nowrap">
-              {syncStatus === 'connected' ? 'Realtime terhubung' : syncStatus === 'reconnecting' ? 'Menghubungkan ulang' : syncStatus === 'offline' ? 'Offline' : 'Menghubungkan...'}
+              {isOffline || syncStatus === 'offline' ? 'Offline' : syncStatus === 'connected' ? 'Realtime terhubung' : syncStatus === 'reconnecting' ? 'Menghubungkan ulang' : 'Menghubungkan...'}
               {' · '}
               <span className="font-mono tabular-nums">Update {lastSyncedFormatted} WIB</span>
             </span>
