@@ -136,6 +136,9 @@ export function BarberAppShell() {
         onNavigate={navigateTo}
         currentCustomer={store.currentCustomer}
         onLogoutCustomer={handleLogoutCustomer}
+        syncStatus={store.syncStatus}
+        isOffline={store.isOffline}
+        lastSyncedFormatted={store.lastSyncedFormatted}
       />
 
       <main className="flex-1 w-full pb-24 lg:pb-12">
