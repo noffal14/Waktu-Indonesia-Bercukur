@@ -50,6 +50,7 @@ interface BookingViewProps {
   dbState: BarberDatabaseState;
   capsterProfile: CapsterProfile;
   todayStr: string;
+  nowMs: number;
   currentCustomer: Customer;
   activePromos: Promo[];
   preselectedBooking?: {
@@ -79,6 +80,7 @@ export function BookingView({
   dbState,
   capsterProfile,
   todayStr,
+  nowMs,
   currentCustomer,
   activePromos,
   preselectedBooking,
@@ -140,7 +142,9 @@ export function BookingView({
   const { config, slots } = barberService.getComputedSlots(
     dbState,
     selectedCapster.id,
-    effectiveTanggal
+    effectiveTanggal,
+    undefined,
+    nowMs
   );
 
   // Validasi apakah slot yang saat ini dipilih masih cukup untuk durasi layanan terbaru
