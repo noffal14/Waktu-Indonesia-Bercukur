@@ -3,7 +3,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { verifyCapsterRequest, CapsterAuthError, capsterErrorResponse } from '@/lib/server/capster-auth';
 import { getOperationalSessionKey, getOperationalHoursForDate, generateHourSlots, parseWibEpochMs, getWibParts, formatWibIsoDateTime, LATE_TOLERANCE_MINUTES, RESCHEDULE_MIN_LEAD_MINUTES } from '@/lib/barbershop-config';
-import { calculateServicesPricing, getInitialSystemPromos, isPromoActiveNow } from '@/lib/services-catalog';
+import { calculateServicesPricing, isPromoActiveNow } from '@/lib/services-catalog';
 import { drainSheetSyncQueue } from '@/lib/sheets-outbox';
 import { getInitialCapsterProfile, normalizeWaToLocal08, normalizeWaTo628, validateInstagramHandle } from '@/lib/capster-profile';
 
@@ -233,7 +233,7 @@ async function handleBookingCreate(uid: string, body: any) {
   if (!date || !startSlot || selected.length === 0) return fail(400, 'Tanggal, slot, dan layanan wajib dipilih.', 'VALIDATION_ERROR');
 
   const promoSnap = await db.collection('promos').get();
-  const promos = promoSnap.empty ? getInitialSystemPromos() : promoSnap.docs.map((doc) => doc.data() as any);
+  const promos = promoSnap.docs.map((doc) => doc.data() as any);
   const activePromos = promos.filter((promo: any) => isPromoActiveNow(promo, Date.now()));
   const pricing = calculateServicesPricing(selected, activePromos);
   if (!pricing.lines.length) return fail(400, 'Layanan yang dipilih tidak valid.', 'VALIDATION_ERROR');
@@ -638,7 +638,7 @@ async function handleCapsterAction(action: StoreAction, body: any) {
       const selected = Array.isArray(body.selectedServices) ? body.selectedServices : [];
       if (!selected.length) return fail(400, 'Pilih minimal satu layanan untuk walk-in.', 'VALIDATION_ERROR');
       const promoSnap = await db.collection('promos').get();
-      const promos = promoSnap.empty ? getInitialSystemPromos() : promoSnap.docs.map((item) => item.data() as any);
+      const promos = promoSnap.docs.map((item) => item.data() as any);
       const activePromos = promos.filter((promo: any) => isPromoActiveNow(promo, now));
       const pricing = calculateServicesPricing(selected, activePromos);
       if (!pricing.lines.length) return fail(400, 'Layanan walk-in tidak valid.', 'VALIDATION_ERROR');
