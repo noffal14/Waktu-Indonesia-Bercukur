@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
-import { adminDb } from '@/lib/firebase-admin';
+import { getAdminDb } from '@/lib/firebase-admin';
 import {
   CAPSTER_ID, CAPSTER_SESSION_TTL_MS, CapsterAuthError,
   capsterErrorResponse, verifyCapsterIdentity,
@@ -14,11 +14,12 @@ export async function POST(request: Request) {
     const suppliedSessionId = request.headers.get('x-capster-session-id');
     const body = await request.json().catch(() => ({}));
     const deviceInfo = typeof body.deviceInfo === 'string' ? body.deviceInfo.slice(0, 180) : 'Unknown device';
-    const ref = adminDb.collection('capsterSessions').doc(CAPSTER_ID);
+    const db = getAdminDb();
+    const ref = db.collection('capsterSessions').doc(CAPSTER_ID);
     const now = Date.now();
     const candidateId = suppliedSessionId || randomUUID();
 
-    const result = await adminDb.runTransaction(async (tx) => {
+    const result = await db.runTransaction(async (tx) => {
       const snapshot = await tx.get(ref);
       const current = snapshot.data();
       const lastSeen = current?.lastSeen;
@@ -48,7 +49,8 @@ export async function DELETE(request: Request) {
     await verifyCapsterIdentity(request);
     const sessionId = request.headers.get('x-capster-session-id');
     if (!sessionId) throw new CapsterAuthError(401, 'Sesi capster tidak ditemukan.');
-    const ref = adminDb.collection('capsterSessions').doc(CAPSTER_ID);
+    const db = getAdminDb();
+    const ref = db.collection('capsterSessions').doc(CAPSTER_ID);
     await adminDb.runTransaction(async (tx) => {
       const snapshot = await tx.get(ref);
       if (snapshot.exists && snapshot.data()?.sessionId === sessionId) tx.delete(ref);
