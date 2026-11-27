@@ -21,7 +21,7 @@ async function getUid(request: Request, allowMissingProfile = false) {
   }
   if (decoded.role === 'capster') throw new Error('FORBIDDEN');
   const email = String(decoded.email || '').toLowerCase();
-  const phoneFromEmail = email.match(/^(628\\d{8,12})@pelanggan\\.waktu-indonesia\\.app$/)?.[1];
+  const phoneFromEmail = email.match(/^(628\d{8,12})@pelanggan\.waktu-indonesia\\.app$/)?.[1];
   if (!phoneFromEmail) throw new Error('FORBIDDEN');
   if (!allowMissingProfile) {
     const profile = await getAdminDb().collection('customers').doc(decoded.uid).get();
