@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { EmailAuthProvider, onAuthStateChanged, reauthenticateWithCredential, signInWithEmailAndPassword, signOut, updatePassword } from 'firebase/auth';
 import { firebaseAuth } from '@/lib/firebase-client';
 import {
   barberService,
@@ -822,19 +822,34 @@ export function useBarberStore() {
   );
 
   const changeCapsterPassword = useCallback(
-    (params: {
+    async (params: {
       currentPassword: string;
       newPassword: string;
       confirmPassword: string;
-    }): ServiceResult<BarberDatabaseState> => {
-      const res = barberService.changeCapsterPassword(params);
-      if (res.ok && res.data) {
-        setDbState(res.data);
-        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
+    }): Promise<ServiceResult<BarberDatabaseState>> => {
+      const user = firebaseAuth?.currentUser;
+      if (!user?.email) {
+        return { ok: false, errorCode: 'AUTH_REQUIRED', message: 'Sesi Firebase capster tidak aktif.' };
       }
-      return res;
+      if (params.newPassword.length < 6 || params.newPassword !== params.confirmPassword) {
+        return { ok: false, errorCode: 'VALIDATION_ERROR', message: 'Password baru minimal 6 karakter dan konfirmasi harus sama.' };
+      }
+      try {
+        const credential = EmailAuthProvider.credential(user.email, params.currentPassword);
+        await reauthenticateWithCredential(user, credential);
+        await updatePassword(user, params.newPassword);
+        return { ok: true, data: dbState };
+      } catch (error) {
+        const code = (error as { code?: string }).code;
+        const message = code === 'auth/wrong-password' || code === 'auth/invalid-credential'
+          ? 'Password saat ini tidak sesuai.'
+          : code === 'auth/weak-password'
+            ? 'Password baru terlalu lemah.'
+            : 'Gagal memperbarui password Firebase. Silakan coba lagi.';
+        return { ok: false, errorCode: 'UNAUTHORIZED', message };
+      }
     },
-    []
+    [dbState]
   );
 
   return {
