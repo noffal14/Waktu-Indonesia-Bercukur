@@ -367,6 +367,18 @@ export function useBarberStore() {
     const onError = () => {
       if (!disposed) setSyncStatus(typeof navigator !== 'undefined' && navigator.onLine ? 'reconnecting' : 'offline');
     };
+    const updateSnapshotStatus = (fromCache: boolean) => {
+      if (disposed) return;
+      const online = typeof navigator === 'undefined' || navigator.onLine;
+      if (!online) {
+        setSyncStatus('offline');
+      } else {
+        setSyncStatus(fromCache ? 'reconnecting' : 'connected');
+        if (!fromCache) {
+          setLastSyncedFormatted(formatTimeWibHHMM(Date.now() + serverOffsetRef.current));
+        }
+      }
+    };
     setSyncStatus('connecting');
     const capster = sessionRole === 'capster';
 
@@ -377,9 +389,9 @@ export function useBarberStore() {
     ) => {
       const source = collection(firestore, path);
       const ref = customerOnly ? query(source, where('customerUid', '==', uid)) : source;
-      unsubscribers.push(onSnapshot(ref, (snapshot) => {
+      unsubscribers.push(onSnapshot(ref, { includeMetadataChanges: true }, (snapshot) => {
         assign(snapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as T));
-        setSyncStatus(typeof navigator !== 'undefined' && navigator.onLine ? 'connected' : 'offline');
+        updateSnapshotStatus(snapshot.metadata.fromCache);
         apply();
       }, onError));
     };
@@ -395,33 +407,36 @@ export function useBarberStore() {
     const privateBooking = collection(firestore, 'bookingPrivate');
     const queueQuery = capster ? privateQueue : query(privateQueue, where('customerUid', '==', uid));
     const bookingQuery = capster ? privateBooking : query(privateBooking, where('customerUid', '==', uid));
-    if (sessionRole) unsubscribers.push(onSnapshot(queueQuery, (snapshot) => {
+    if (sessionRole) unsubscribers.push(onSnapshot(queueQuery, { includeMetadataChanges: true }, (snapshot) => {
       cache.queuePrivate = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
-      setSyncStatus('connected');
+      updateSnapshotStatus(snapshot.metadata.fromCache);
       apply();
     }, onError));
-    if (sessionRole) unsubscribers.push(onSnapshot(bookingQuery, (snapshot) => {
+    if (sessionRole) unsubscribers.push(onSnapshot(bookingQuery, { includeMetadataChanges: true }, (snapshot) => {
       cache.bookingPrivate = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
-      setSyncStatus('connected');
+      updateSnapshotStatus(snapshot.metadata.fromCache);
       apply();
     }, onError));
 
     if (sessionRole === 'pelanggan' && uid) {
-      unsubscribers.push(onSnapshot(doc(firestore, 'customers', uid), (snapshot) => {
+      unsubscribers.push(onSnapshot(doc(firestore, 'customers', uid), { includeMetadataChanges: true }, (snapshot) => {
         cache.customer = snapshot.exists()
           ? ({ id: uid, ...snapshot.data(), passwordHash: '' } as Customer)
           : null;
+        updateSnapshotStatus(snapshot.metadata.fromCache);
         apply();
       }, onError));
     }
-    unsubscribers.push(onSnapshot(doc(firestore, 'capsterProfile', 'hasan'), (snapshot) => {
+    unsubscribers.push(onSnapshot(doc(firestore, 'capsterProfile', 'hasan'), { includeMetadataChanges: true }, (snapshot) => {
       cache.profile = snapshot.exists()
         ? (snapshot.data() as CapsterProfile)
         : getInitialCapsterProfile();
+      updateSnapshotStatus(snapshot.metadata.fromCache);
       apply();
     }, onError));
-    unsubscribers.push(onSnapshot(doc(firestore, 'queueSessions', operationalDayKey), (snapshot) => {
+    unsubscribers.push(onSnapshot(doc(firestore, 'queueSessions', operationalDayKey), { includeMetadataChanges: true }, (snapshot) => {
       cache.quota = snapshot.exists() ? snapshot.data() : null;
+      updateSnapshotStatus(snapshot.metadata.fromCache);
       apply();
     }, onError));
 
