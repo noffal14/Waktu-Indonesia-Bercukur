@@ -77,10 +77,12 @@ export function LoginPageShell() {
 
   const isCapsterLoggedIn =
     store.hydrated &&
+    store.authReady &&
     store.sessionRole === 'capster' &&
     Boolean(store.loggedInCapster);
   const isCustomerLoggedIn =
     store.hydrated &&
+    store.authReady &&
     store.sessionRole === 'pelanggan' &&
     Boolean(store.currentCustomer);
 
@@ -146,6 +148,7 @@ export function LoginPageShell() {
 
   if (
     !store.hydrated ||
+    !store.authReady ||
     isCapsterLoggedIn ||
     (isCustomerLoggedIn && selectedRole === 'pelanggan')
   ) {
