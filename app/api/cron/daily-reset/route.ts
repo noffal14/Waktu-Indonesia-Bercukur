@@ -1,22 +1,9 @@
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { getOperationalSessionKey } from '@/lib/barbershop-config';
 
 export const dynamic = 'force-dynamic';
 
-function wibParts(date: Date) {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', weekday: 'short', hourCycle: 'h23',
-  }).formatToParts(date);
-  return Object.fromEntries(parts.map((part) => [part.type, part.value]));
-}
-
-function addDate(date: string, amount: number) {
-  const base = new Date(date + 'T12:00:00+07:00');
-  base.setDate(base.getDate() + amount);
-  const p = wibParts(base);
-  return `${p.year}-${p.month}-${p.day}`;
-}
 
 export async function GET(request: Request) {
   const secret = process.env.CRON_SECRET;
@@ -24,12 +11,7 @@ export async function GET(request: Request) {
     return Response.json({ ok: false, message: 'Unauthorized' }, { status: 401 });
   }
 
-  const now = new Date();
-  const p = wibParts(now);
-  const today = `${p.year}-${p.month}-${p.day}`;
-  const openingHour = p.weekday === 'Sat' || p.weekday === 'Sun' ? 10 : 12;
-  const beforeOpening = Number(p.hour) < openingHour;
-  const sessionKey = beforeOpening ? addDate(today, -1) : today;
+  const sessionKey = getOperationalSessionKey(Date.now());
   const db = getAdminDb();
   const sessionRef = db.collection('queueSessions').doc(sessionKey);
 
