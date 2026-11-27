@@ -306,7 +306,8 @@ export function useBarberStore() {
   }, [hydrated]);
 
   useEffect(() => {
-    if (!hydrated || !firestore) return;
+    const db = firestore;
+    if (!hydrated || !db) return;
     const user = firebaseAuth?.currentUser;
     const uid = user?.uid || '';
     let disposed = false;
@@ -387,7 +388,7 @@ export function useBarberStore() {
       assign: (rows: T[]) => void,
       customerOnly = false
     ) => {
-      const source = collection(firestore, path);
+      const source = collection(db, path);
       const ref = customerOnly ? query(source, where('customerUid', '==', uid)) : source;
       unsubscribers.push(onSnapshot(ref, { includeMetadataChanges: true }, (snapshot) => {
         assign(snapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as T));
@@ -403,8 +404,8 @@ export function useBarberStore() {
     });
     addCollectionListener<Promo>('promos', (rows) => { cache.promos = rows; cache.promosLoaded = true; });
 
-    const privateQueue = collection(firestore, 'queuePrivate');
-    const privateBooking = collection(firestore, 'bookingPrivate');
+    const privateQueue = collection(db, 'queuePrivate');
+    const privateBooking = collection(db, 'bookingPrivate');
     const queueQuery = capster ? privateQueue : query(privateQueue, where('customerUid', '==', uid));
     const bookingQuery = capster ? privateBooking : query(privateBooking, where('customerUid', '==', uid));
     if (sessionRole) unsubscribers.push(onSnapshot(queueQuery, { includeMetadataChanges: true }, (snapshot) => {
@@ -419,7 +420,7 @@ export function useBarberStore() {
     }, onError));
 
     if (sessionRole === 'pelanggan' && uid) {
-      unsubscribers.push(onSnapshot(doc(firestore, 'customers', uid), { includeMetadataChanges: true }, (snapshot) => {
+      unsubscribers.push(onSnapshot(doc(db, 'customers', uid), { includeMetadataChanges: true }, (snapshot) => {
         cache.customer = snapshot.exists()
           ? ({ id: uid, ...snapshot.data(), passwordHash: '' } as Customer)
           : null;
@@ -427,14 +428,14 @@ export function useBarberStore() {
         apply();
       }, onError));
     }
-    unsubscribers.push(onSnapshot(doc(firestore, 'capsterProfile', 'hasan'), { includeMetadataChanges: true }, (snapshot) => {
+    unsubscribers.push(onSnapshot(doc(db, 'capsterProfile', 'hasan'), { includeMetadataChanges: true }, (snapshot) => {
       cache.profile = snapshot.exists()
         ? (snapshot.data() as CapsterProfile)
         : getInitialCapsterProfile();
       updateSnapshotStatus(snapshot.metadata.fromCache);
       apply();
     }, onError));
-    unsubscribers.push(onSnapshot(doc(firestore, 'queueSessions', operationalDayKey), { includeMetadataChanges: true }, (snapshot) => {
+    unsubscribers.push(onSnapshot(doc(db, 'queueSessions', operationalDayKey), { includeMetadataChanges: true }, (snapshot) => {
       cache.quota = snapshot.exists() ? snapshot.data() : null;
       updateSnapshotStatus(snapshot.metadata.fromCache);
       apply();
