@@ -81,31 +81,31 @@ interface CapsterPortalViewProps {
   onCallWalkin: (
     walkinId: string,
     capsterId?: string
-  ) => ServiceResult<BarberDatabaseState>;
+  ) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onCompleteWalkin: (
     walkinId: string,
     overrideDurationMinutes?: number
-  ) => ServiceResult<BarberDatabaseState>;
-  onCancelWalkin: (walkinId: string) => ServiceResult<BarberDatabaseState>;
-  onStartBooking: (bookingId: string) => ServiceResult<BarberDatabaseState>;
+  ) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
+  onCancelWalkin: (walkinId: string) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
+  onStartBooking: (bookingId: string) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onCompleteBooking: (
     bookingId: string,
     overrideDurationMinutes?: number
-  ) => ServiceResult<BarberDatabaseState>;
+  ) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onCancelBookingManual: (
     bookingId: string
-  ) => ServiceResult<BarberDatabaseState>;
+  ) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onUpdateQuota: (
     operationalDayKey: string,
     maxQuota: number
-  ) => ServiceResult<BarberDatabaseState>;
+  ) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onSetDayOff: (params: {
     capsterId: string;
     tanggal: string;
     isLibur: boolean;
     alasanLibur?: string;
     forceCancelConflicts?: boolean;
-  }) => ServiceResult<BarberDatabaseState>;
+  }) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onSetSlotManual: (params: {
     capsterId: string;
     tanggal: string;
@@ -113,7 +113,7 @@ interface CapsterPortalViewProps {
     mode: 'tersedia' | 'tidak_tersedia' | 'terisi_manual';
     catatan?: string;
     forceCancelConflict?: boolean;
-  }) => ServiceResult<BarberDatabaseState>;
+  }) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onCreatePromo: (params: {
     judul: string;
     deskripsi: string;
@@ -123,7 +123,7 @@ interface CapsterPortalViewProps {
     aktif: boolean;
     berlakuDari?: string;
     berlakuSampai?: string;
-  }) => ServiceResult<BarberDatabaseState>;
+  }) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onUpdatePromo: (
     promoId: string,
     params: {
@@ -136,15 +136,15 @@ interface CapsterPortalViewProps {
       berlakuDari?: string;
       berlakuSampai?: string;
     }
-  ) => ServiceResult<BarberDatabaseState>;
-  onTogglePromoActive: (promoId: string) => ServiceResult<BarberDatabaseState>;
-  onDeletePromo: (promoId: string) => ServiceResult<BarberDatabaseState>;
+  ) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
+  onTogglePromoActive: (promoId: string) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
+  onDeletePromo: (promoId: string) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onUpdateCapsterProfile: (params: {
     pengalaman: string;
     nomorWhatsApp: string;
     instagramCapster: string;
     instagramBarbershop: string;
-  }) => ServiceResult<BarberDatabaseState>;
+  }) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onChangeCapsterPassword: (params: {
     currentPassword: string;
     newPassword: string;
@@ -469,19 +469,22 @@ export function CapsterPortalView({
     setCompletingItem({ type, id, minutes: computedElapsed });
   };
 
-  const handleActionResult = (
-    res: ServiceResult<BarberDatabaseState>,
+  const handleActionResult = async (
+    result: ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>,
     successMsg?: string
   ) => {
-    if (!res.ok) {
-      setActionNotice({
-        type: 'error',
-        text: res.message || 'Aksi gagal dijalankan.',
-      });
-      return;
-    }
-    if (successMsg) {
-      setActionNotice({ type: 'success', text: successMsg });
+    try {
+      const res = await result;
+      if (!res.ok) {
+        setActionNotice({
+          type: 'error',
+          text: res.message || 'Aksi gagal dijalankan.',
+        });
+        return;
+      }
+      if (successMsg) setActionNotice({ type: 'success', text: successMsg });
+    } catch {
+      setActionNotice({ type: 'error', text: 'Koneksi gagal. Silakan coba lagi.' });
     }
   };
 
@@ -496,9 +499,9 @@ export function CapsterPortalView({
       effectiveSchedDate
     );
 
-  const handleToggleDayOff = (forceCancelConflicts = false) => {
+  const handleToggleDayOff = async (forceCancelConflicts = false) => {
     const nextLibur = !editConfig.isLibur;
-    const res = onSetDayOff({
+    const res = await onSetDayOff({
       capsterId: loggedInCapster.id,
       tanggal: effectiveSchedDate,
       isLibur: nextLibur,
@@ -532,13 +535,13 @@ export function CapsterPortalView({
     );
   };
 
-  const handleApplySlotManual = (
+  const handleApplySlotManual = async (
     jam: string,
     mode: 'tersedia' | 'tidak_tersedia' | 'terisi_manual',
     catatan?: string,
     forceCancelConflict = false
   ) => {
-    const res = onSetSlotManual({
+    const res = await onSetSlotManual({
       capsterId: loggedInCapster.id,
       tanggal: effectiveSchedDate,
       jam,
@@ -578,10 +581,10 @@ export function CapsterPortalView({
     );
   };
 
-  const handleConfirmConflictCancellation = () => {
+  const handleConfirmConflictCancellation = async () => {
     if (!pendingConflict) return;
     if (pendingConflict.kind === 'dayoff') {
-      const res = onSetDayOff({
+      const res = await onSetDayOff({
         capsterId: pendingConflict.capsterId,
         tanggal: pendingConflict.tanggal,
         isLibur: pendingConflict.isLibur,
@@ -598,7 +601,7 @@ export function CapsterPortalView({
       return;
     }
 
-    const res = onSetSlotManual({
+    const res = await onSetSlotManual({
       capsterId: pendingConflict.capsterId,
       tanggal: pendingConflict.tanggal,
       jam: pendingConflict.jam,
@@ -1972,7 +1975,7 @@ export function CapsterPortalView({
             )}
 
             <form
-              onSubmit={(e) => {
+              onSubmit={async (e) => {
                 e.preventDefault();
                 setPromoFormError(null);
 
@@ -1987,9 +1990,9 @@ export function CapsterPortalView({
                   berlakuSampai: promoBerlakuSampai || undefined,
                 };
 
-                const res = editingPromoId
+                const res = await (editingPromoId
                   ? onUpdatePromo(editingPromoId, payload)
-                  : onCreatePromo(payload);
+                  : onCreatePromo(payload));
 
                 if (!res.ok) {
                   setPromoFormError(
@@ -2204,10 +2207,10 @@ export function CapsterPortalView({
               )}
 
               <form
-                onSubmit={(e) => {
+                onSubmit={async (e) => {
                   e.preventDefault();
                   setProfileFormError(null);
-                  const res = onUpdateCapsterProfile({
+                  const res = await onUpdateCapsterProfile({
                     pengalaman: profPengalaman,
                     nomorWhatsApp: profWa,
                     instagramCapster: profIgCapster,
