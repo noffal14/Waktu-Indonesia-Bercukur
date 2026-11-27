@@ -48,6 +48,12 @@ Jadwal maintenance memakai GitHub Actions agar tidak bergantung pada batas freku
 - `WIB_CRON_SECRET`: nilai yang sama dengan `CRON_SECRET` pada Vercel.
 
 Workflow `.github/workflows/scheduled-maintenance.yml` aktif setelah branch ini digabung ke default branch. Jadwal UTC: daily reset pukul 03:00 dan 05:00, booking expiry setiap 5 menit, dan retry Google Sheets setiap 15 menit. Workflow juga dapat dijalankan manual melalui GitHub Actions. `vercel.json` sengaja tidak menjadwalkan cron agar deployment tetap kompatibel dengan paket Vercel Hobby.
+### Mode offline
+
+Firestore Web menggunakan cache persisten IndexedDB multi-tab. Halaman pelanggan dan capster dapat menampilkan data terakhir yang sudah pernah tersinkron ketika jaringan terputus. Semua perubahan data tetap read-only saat offline karena antrean, booking, pembatalan, jadwal, promo, dan profil harus melewati API server.
+
+Cache IndexedDB dapat tetap tersimpan di browser setelah logout. Gunakan aplikasi pada perangkat pribadi/tepercaya, bukan komputer publik atau perangkat bersama. Logout mengakhiri sesi autentikasi, tetapi tidak menghapus cache Firestore secara fisik.
+
 ## 4. Implementasi pada branch fitur
 
 - Firebase Authentication untuk pelanggan menggunakan email internal yang diturunkan dari nomor WhatsApp. UI tetap meminta nomor WhatsApp.
