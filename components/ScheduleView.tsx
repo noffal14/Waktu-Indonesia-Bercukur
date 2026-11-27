@@ -15,6 +15,7 @@ import { StatusIndicator } from './StatusIndicator';
 interface ScheduleViewProps {
   dbState: BarberDatabaseState;
   todayStr: string;
+  nowMs: number;
   initialCapsterId?: string;
   onSelectSlotToBook: (params: {
     capsterId: string;
@@ -26,6 +27,7 @@ interface ScheduleViewProps {
 export function ScheduleView({
   dbState,
   todayStr,
+  nowMs,
   initialCapsterId,
   onSelectSlotToBook,
 }: ScheduleViewProps) {
@@ -48,7 +50,9 @@ export function ScheduleView({
   const { config, slots } = barberService.getComputedSlots(
     dbState,
     selectedCapster.id,
-    effectiveDate
+    effectiveDate,
+    undefined,
+    nowMs
   );
 
   const availableCount = slots.filter((s) => s.status === 'Available').length;
