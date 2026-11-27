@@ -44,7 +44,7 @@ import {
   SlotStatus,
 } from './types';
 
-export const STORAGE_VERSION = 7;
+export const STATE_SCHEMA_VERSION = 7;
 
 /**
  * Service kompatibilitas untuk kalkulasi jadwal, harga, dan state awal.
@@ -199,7 +199,7 @@ export function parseSlotEpochMs(tanggal: string, jamSlot: string): number {
 export function createInitialSystemState(): BarberDatabaseState {
   const initialProfile = getInitialCapsterProfile();
   return {
-    version: STORAGE_VERSION,
+    version: STATE_SCHEMA_VERSION,
     capsters: mergeSystemCapsters(undefined, initialProfile),
     capsterProfile: initialProfile,
     customers: [],
@@ -251,7 +251,7 @@ class BarberCompatibilityService {
     };
     const nextState: BarberDatabaseState = {
       ...state,
-      version: STORAGE_VERSION,
+      version: STATE_SCHEMA_VERSION,
       capsterProfile: profile,
       capsters: mergeSystemCapsters(state.capsters, profile),
       promos: Array.isArray(state.promos) ? state.promos : getInitialSystemPromos(),
