@@ -110,7 +110,7 @@ export async function upsertCustomerByWhatsApp(values: Record<string, string | n
       requestBody: { values: [row] },
     });
     const updatedRange = response.data.updates?.updatedRange ?? '';
-    const rowNumber = Number(updatedRange.match(/![A-Z]+(\\d+)/)?.[1] ?? 0);
+    const rowNumber = Number(updatedRange.match(/![A-Z]+(\d+)/)?.[1] ?? 0);
     return { synced: true, created: true, rowNumber: rowNumber || undefined, updatedRange };
   }
 
