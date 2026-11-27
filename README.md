@@ -40,7 +40,7 @@ Semua penulisan transaksi memeriksa header sebelum menulis. Tab `Rekap_Harian` h
 
 ## 3. Environment dan deployment
 
-Salin `.env.example` ke `.env.local`. Jangan commit nilai rahasia. Atur seluruh environment variable pada pengaturan project Vercel. Pastikan `CRON_SECRET` adalah secret acak yang kuat. Endpoint cron menerima header `Authorization: Bearer ...`.
+Gunakan Node.js 22 atau lebih baru untuk pengembangan dan runtime deployment. Salin `.env.example` ke `.env.local`. Jangan commit nilai rahasia. Atur seluruh environment variable pada pengaturan project Vercel. Pastikan `CRON_SECRET` adalah secret acak yang kuat. Endpoint cron menerima header `Authorization: Bearer ...`.
 
 Jadwal maintenance memakai GitHub Actions agar tidak bergantung pada batas frekuensi cron Vercel Hobby. Di GitHub repository settings, tambahkan Actions secrets:
 
