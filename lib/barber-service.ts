@@ -255,101 +255,10 @@ function migratePromosToV5(existingPromos?: Promo[]): Promo[] {
 }
 
 class BarberLocalStorageService {
-  private clearLegacyDataIfNeeded(): void {
-    if (typeof window === 'undefined') return;
-    for (const key of LEGACY_STORAGE_KEYS) {
-      if (window.localStorage.getItem(key) !== null) {
-        window.localStorage.removeItem(key);
-      }
-    }
-  }
+  private memoryState: BarberDatabaseState = createInitialSystemState();
 
   private readRaw(): BarberDatabaseState {
-    if (typeof window === 'undefined') {
-      return createInitialSystemState();
-    }
-    this.clearLegacyDataIfNeeded();
-    try {
-      const rawCurrent = window.localStorage.getItem(STORAGE_KEY);
-      if (!rawCurrent) {
-        // Migrasi non-destruktif dari v5 atau v4 ke v6 tanpa menghapus pelanggan, antrean, booking, kuota, jadwal, atau sesi
-        for (const oldKey of [V5_STORAGE_KEY, V4_STORAGE_KEY]) {
-          const rawOld = window.localStorage.getItem(oldKey);
-          if (!rawOld) continue;
-          try {
-            const parsedOld = JSON.parse(rawOld) as Partial<BarberDatabaseState>;
-            if (parsedOld && (parsedOld.version === 5 || parsedOld.version === 4)) {
-              const profile: CapsterProfile = {
-                ...getInitialCapsterProfile(),
-                ...(parsedOld.capsterProfile || {}),
-              };
-              const migrated: BarberDatabaseState = {
-                version: STORAGE_VERSION,
-                capsters: mergeSystemCapsters(parsedOld.capsters, profile),
-                capsterProfile: profile,
-                customers: Array.isArray(parsedOld.customers)
-                  ? parsedOld.customers
-                  : [],
-                walkinQueue: Array.isArray(parsedOld.walkinQueue)
-                  ? parsedOld.walkinQueue
-                  : [],
-                quotas: parsedOld.quotas || {},
-                schedules: parsedOld.schedules || {},
-                bookings: Array.isArray(parsedOld.bookings)
-                  ? parsedOld.bookings
-                  : [],
-                promos: migratePromosToV5(parsedOld.promos),
-                lastUpdatedAt: Date.now(),
-              };
-              window.localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
-              window.localStorage.removeItem(oldKey);
-              return migrated;
-            }
-          } catch {
-            // Lanjut cek versi sebelumnya jika korup
-          }
-        }
-        const fresh = createInitialSystemState();
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(fresh));
-        return fresh;
-      }
-
-      const parsed = JSON.parse(rawCurrent) as BarberDatabaseState;
-      if (!parsed || parsed.version !== STORAGE_VERSION) {
-        const fresh = createInitialSystemState();
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(fresh));
-        window.localStorage.removeItem(SESSION_ROLE_KEY);
-        window.localStorage.removeItem(CUSTOMER_SESSION_ID_KEY);
-        window.localStorage.removeItem(CAPSTER_SESSION_ID_KEY);
-        return fresh;
-      }
-
-      const profile: CapsterProfile = {
-        ...getInitialCapsterProfile(),
-        ...(parsed.capsterProfile || {}),
-      };
-
-      // Pastikan akun sistem capster (Hasan) selalu ada & mempertahankan password hash terbaru
-      return {
-        ...parsed,
-        capsterProfile: profile,
-        capsters: mergeSystemCapsters(parsed.capsters, profile),
-        customers: Array.isArray(parsed.customers) ? parsed.customers : [],
-        walkinQueue: Array.isArray(parsed.walkinQueue)
-          ? parsed.walkinQueue
-          : [],
-        bookings: Array.isArray(parsed.bookings) ? parsed.bookings : [],
-        promos: Array.isArray(parsed.promos)
-          ? parsed.promos
-          : getInitialSystemPromos(),
-        quotas: parsed.quotas || {},
-        schedules: parsed.schedules || {},
-      };
-    } catch {
-      const fresh = createInitialSystemState();
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(fresh));
-      return fresh;
-    }
+    return this.memoryState;
   }
 
   private writeRaw(state: BarberDatabaseState): BarberDatabaseState {
@@ -362,41 +271,23 @@ class BarberLocalStorageService {
       version: STORAGE_VERSION,
       capsterProfile: profile,
       capsters: mergeSystemCapsters(state.capsters, profile),
-      promos: Array.isArray(state.promos)
-        ? state.promos
-        : getInitialSystemPromos(),
+      promos: Array.isArray(state.promos) ? state.promos : getInitialSystemPromos(),
       lastUpdatedAt: Date.now(),
     };
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
-    }
+    this.memoryState = nextState;
     return nextState;
   }
 
-  // =========================================================================
-  // ROLE & SESSION MANAGEMENT
-  // =========================================================================
-
   public getSessionRole(): SessionRole {
-    if (typeof window === 'undefined') return null;
-    const role = window.localStorage.getItem(SESSION_ROLE_KEY);
-    if (role === 'pelanggan' && this.getCustomerSessionId()) {
-      return 'pelanggan';
-    }
-    if (role === 'capster' && this.getCapsterSessionId()) {
-      return 'capster';
-    }
     return null;
   }
 
   public getCustomerSessionId(): string | null {
-    if (typeof window === 'undefined') return null;
-    return window.localStorage.getItem(CUSTOMER_SESSION_ID_KEY);
+    return null;
   }
 
   public getCapsterSessionId(): string | null {
-    if (typeof window === 'undefined') return null;
-    return window.localStorage.getItem(CAPSTER_SESSION_ID_KEY);
+    return null;
   }
 
   private requireCapsterRole(): ServiceResult<Capster> {
@@ -621,19 +512,13 @@ class BarberLocalStorageService {
   }
 
   public logoutCustomer(): void {
-    if (typeof window === 'undefined') return;
-    if (window.localStorage.getItem(SESSION_ROLE_KEY) === 'pelanggan') {
-      window.localStorage.removeItem(SESSION_ROLE_KEY);
-    }
-    window.localStorage.removeItem(CUSTOMER_SESSION_ID_KEY);
+    // Session pelanggan sekarang dikelola Firebase Authentication.
   }
 
-  private setCustomerSession(customerId: string): void {
-    if (typeof window === 'undefined') return;
-    window.localStorage.removeItem(CAPSTER_SESSION_ID_KEY);
-    window.localStorage.setItem(SESSION_ROLE_KEY, 'pelanggan');
-    window.localStorage.setItem(CUSTOMER_SESSION_ID_KEY, customerId);
+  private setCustomerSession(_customerId: string): void {
+    // No-op: sesi pelanggan tidak disimpan di browser storage.
   }
+
 
   public getCurrentCustomer(state?: BarberDatabaseState): Customer | null {
     if (this.getSessionRole() !== 'pelanggan') return null;
@@ -655,28 +540,14 @@ class BarberLocalStorageService {
   }
 
   public activateCapsterSession(capsterId: string): ServiceResult<Capster> {
-    if (this.getSessionRole() === 'pelanggan') {
-      return { ok: false, errorCode: 'UNAUTHORIZED', message: 'Akun ini bukan akun capster.' };
-    }
-    const state = this.syncAndGetState();
-    const found = state.capsters.find((capster) => capster.id === capsterId);
-    if (!found) {
-      return { ok: false, errorCode: 'NOT_FOUND', message: 'Data capster tidak ditemukan.' };
-    }
-    if (typeof window !== 'undefined') {
-      window.localStorage.removeItem(CUSTOMER_SESSION_ID_KEY);
-      window.localStorage.setItem(SESSION_ROLE_KEY, 'capster');
-      window.localStorage.setItem(CAPSTER_SESSION_ID_KEY, found.id);
-    }
-    return { ok: true, data: found };
+    const found = this.readRaw().capsters.find((capster) => capster.id === capsterId);
+    return found
+      ? { ok: true, data: found }
+      : { ok: false, errorCode: 'NOT_FOUND', message: 'Data capster tidak ditemukan.' };
   }
 
   public logoutCapster(): void {
-    if (typeof window === 'undefined') return;
-    if (window.localStorage.getItem(SESSION_ROLE_KEY) === 'capster') {
-      window.localStorage.removeItem(SESSION_ROLE_KEY);
-    }
-    window.localStorage.removeItem(CAPSTER_SESSION_ID_KEY);
+    // Session capster sekarang dikelola Firebase Authentication dan sessionStorage.
   }
 
   public getCurrentCapster(): Capster | null {
