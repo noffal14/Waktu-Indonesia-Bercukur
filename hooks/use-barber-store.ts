@@ -224,7 +224,9 @@ export function useBarberStore() {
           if (!active) return;
           if (!heartbeat.ok) {
             window.sessionStorage.removeItem('wib_capster_session_id');
-            setCapsterSessionMessage('Sesi berakhir karena akun masuk di perangkat lain');
+            const expiryMessage = 'Sesi berakhir karena akun masuk di perangkat lain';
+      window.sessionStorage.setItem('wib_capster_session_message', expiryMessage);
+      setCapsterSessionMessage(expiryMessage);
             await signOut(firebaseAuth).catch(() => undefined);
             return;
           }
