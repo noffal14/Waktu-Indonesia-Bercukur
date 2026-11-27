@@ -10,6 +10,36 @@ export const dynamic = 'force-dynamic';
 function emailForPhone(phone: string) {
   return `${phone}@pelanggan.waktu-indonesia.app`;
 }
+function customerSheetValues(profile: any) {
+  return {
+    'Nama': profile.nama || '',
+    'Nomor WhatsApp': profile.nomorWhatsApp || '',
+    'Email': profile.email || '',
+    'Tanggal Daftar': formatWibIsoDateTime(Number(profile.dibuatPada || Date.now())),
+    'Kunjungan Terakhir': profile.kunjunganTerakhir || '',
+    'Total Kunjungan': Number(profile.totalKunjungan || 0),
+  };
+}
+
+function persistCustomerSheetJob(
+  tx: FirebaseFirestore.Transaction,
+  jobId: string,
+  profile: any,
+  customerUid: string
+) {
+  tx.set(getAdminDb().collection('sheetSyncQueue').doc(jobId), {
+    id: jobId,
+    operation: 'upsertCustomer',
+    values: customerSheetValues(profile),
+    sourcePath: 'customers',
+    sourceId: customerUid,
+    status: 'pending',
+    attempts: 0,
+    runAfter: Date.now(),
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+}
 async function getUid(request: Request, allowMissingProfile = false) {
   const authorization = request.headers.get('authorization') || '';
   const token = authorization.match(/^Bearer\s+(.+)$/i)?.[1];
@@ -59,21 +89,22 @@ export async function POST(request: Request) {
       };
       tx.create(phoneRef, { uid: decoded.uid, createdAt: FieldValue.serverTimestamp() });
       tx.create(customerRef, customer);
+      persistCustomerSheetJob(tx, `customer-${phoneCheck.normalized}-register`, customer, decoded.uid);
     });
 
     const profile = (await customerRef.get()).data();
-    const sheetValues = {
-      'Nama': nama,
-      'Nomor WhatsApp': phoneCheck.normalized,
-      'Email': String(body.email || '').trim().toLowerCase(),
-      'Tanggal Daftar': formatWibIsoDateTime(Number(profile?.dibuatPada || Date.now())),
-      'Kunjungan Terakhir': '',
-      'Total Kunjungan': 0,
-    };
+    const sheetValues = customerSheetValues(profile);
+    const sheetJobId = `customer-${phoneCheck.normalized}-register`;
     try {
       await upsertCustomerByWhatsApp(sheetValues);
+      await db.collection('sheetSyncQueue').doc(sheetJobId).set({
+        status: 'synced', syncedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(), lastError: FieldValue.delete(),
+      }, { merge: true });
     } catch {
-      await enqueueSheetSync(`customer-${phoneCheck.normalized}`, 'upsertCustomer', sheetValues);
+      await enqueueSheetSync(sheetJobId, 'upsertCustomer', sheetValues, {
+        sourcePath: 'customers', sourceId: decoded.uid,
+      });
     }
     return Response.json({ ok: true, customer: { ...profile, id: decoded.uid, passwordHash: '' } }, { status: 201 });
   } catch (error) {
@@ -111,25 +142,33 @@ export async function PATCH(request: Request) {
     if (!current.exists) return Response.json({ ok: false, message: 'Profil pelanggan tidak ditemukan.', errorCode: 'NOT_FOUND' }, { status: 404 });
     const nama = body.nama === undefined ? undefined : String(body.nama).trim();
     if (nama !== undefined && nama.length < 3) return Response.json({ ok: false, message: 'Nama minimal 3 karakter.', errorCode: 'VALIDATION_ERROR' }, { status: 400 });
-    await ref.update({
-      ...(nama !== undefined ? { nama } : {}),
-      ...(body.email !== undefined ? { email: String(body.email || '').trim().toLowerCase() || null } : {}),
-      ...(body.capsterFavoritId !== undefined ? { capsterFavoritId: body.capsterFavoritId === 'hasan' ? 'hasan' : null } : {}),
-      diperbaruiPada: Date.now(),
+    const updated = await getAdminDb().runTransaction(async (tx) => {
+      const snapshot = await tx.get(ref);
+      if (!snapshot.exists) throw new Error('NOT_FOUND');
+      const patch = {
+        ...(nama !== undefined ? { nama } : {}),
+        ...(body.email !== undefined ? { email: String(body.email || '').trim().toLowerCase() || null } : {}),
+        ...(body.capsterFavoritId !== undefined ? { capsterFavoritId: body.capsterFavoritId === 'hasan' ? 'hasan' : null } : {}),
+        diperbaruiPada: Date.now(),
+      };
+      const next = { ...snapshot.data(), ...patch };
+      tx.update(ref, patch);
+      const jobId = `customer-${String(next.nomorWhatsApp || decoded.uid)}-${Date.now()}`;
+      persistCustomerSheetJob(tx, jobId, next, decoded.uid);
+      return { ...next, sheetJobId: jobId };
     });
-    const updated = (await ref.get()).data();
-    const sheetValues = {
-      'Nama': updated?.nama || '',
-      'Nomor WhatsApp': updated?.nomorWhatsApp || '',
-      'Email': updated?.email || '',
-      'Tanggal Daftar': formatWibIsoDateTime(Number(updated?.dibuatPada || Date.now())),
-      'Kunjungan Terakhir': updated?.kunjunganTerakhir || '',
-      'Total Kunjungan': Number(updated?.totalKunjungan || 0),
-    };
+    const sheetValues = customerSheetValues(updated);
+    const sheetJobId = String(updated.sheetJobId);
     try {
       await upsertCustomerByWhatsApp(sheetValues);
+      await getAdminDb().collection('sheetSyncQueue').doc(sheetJobId).set({
+        status: 'synced', syncedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(), lastError: FieldValue.delete(),
+      }, { merge: true });
     } catch {
-      await enqueueSheetSync(`customer-${String(updated?.nomorWhatsApp || decoded.uid)}`, 'upsertCustomer', sheetValues);
+      await enqueueSheetSync(sheetJobId, 'upsertCustomer', sheetValues, {
+        sourcePath: 'customers', sourceId: decoded.uid,
+      });
     }
     return Response.json({ ok: true, customer: { ...updated, id: decoded.uid, passwordHash: '' } });
   } catch (error) {
