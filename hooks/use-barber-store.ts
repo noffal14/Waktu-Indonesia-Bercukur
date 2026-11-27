@@ -1,12 +1,16 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { EmailAuthProvider, onAuthStateChanged, reauthenticateWithCredential, signInWithEmailAndPassword, signOut, updatePassword } from 'firebase/auth';
-import { firebaseAuth } from '@/lib/firebase-client';
+import { createUserWithEmailAndPassword, EmailAuthProvider, onAuthStateChanged, reauthenticateWithCredential, signInWithEmailAndPassword, signOut, updatePassword } from 'firebase/auth';
+import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
+import { firebaseAuth, firestore } from '@/lib/firebase-client';
+import { callCustomerAuthApi, callStoreApi } from '@/lib/store-api';
 import {
   barberService,
   createInitialSystemState,
   formatTimeWibHHMM,
+  normalizeWhatsAppTo628,
+  validateIndonesianWhatsApp,
 } from '@/lib/barber-service';
 import {
   formatLiveClockBannerWib,
@@ -48,6 +52,7 @@ export function useBarberStore() {
     formatTimeWibHHMM(Date.now())
   );
   const [capsterSessionMessage, setCapsterSessionMessage] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState<'connecting' | 'connected' | 'reconnecting' | 'offline'>('connecting');
 
   const isOffline = !browserOnline;
   const isOfflineRef = useRef(isOffline);
@@ -62,8 +67,6 @@ export function useBarberStore() {
     setDbState(next);
     setNowMs(currentNow);
     setLastSyncedFormatted(formatTimeWibHHMM(currentNow));
-    setSessionRole(barberService.getSessionRole());
-    setCustomerSessionId(barberService.getCustomerSessionId());
     setLoggedInCapsterId(barberService.getCapsterSessionId());
   }, []);
 
@@ -195,6 +198,185 @@ export function useBarberStore() {
       if (interval !== undefined) window.clearInterval(interval);
     };
   }, [hydrated, sessionRole]);
+
+  useEffect(() => {
+    if (!hydrated || !firebaseAuth) return;
+    let active = true;
+    const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
+      if (!active) return;
+      if (!user) {
+        if (window.sessionStorage.getItem('wib_capster_session_id')) {
+          setCustomerSessionId(null);
+        } else {
+          setCustomerSessionId(null);
+          setSessionRole(null);
+          if (barberService.getSessionRole() === 'pelanggan') barberService.logoutCustomer();
+        }
+        return;
+      }
+      try {
+        const token = await user.getIdTokenResult();
+        if (!active) return;
+        if (token.claims.role === 'capster') {
+          const local = barberService.activateCapsterSession('hasan');
+          if (local.ok) {
+            setLoggedInCapsterId('hasan');
+            setCustomerSessionId(null);
+            setSessionRole('capster');
+          }
+          return;
+        }
+        if (user.email?.endsWith('@pelanggan.waktu-indonesia.app')) {
+          const result = await callCustomerAuthApi<Customer>('GET');
+          if (!active) return;
+          if (result.ok && result.data) {
+            const customer = { ...result.data, id: user.uid, passwordHash: '' };
+            setDbState((previous) => ({
+              ...previous,
+              customers: [customer],
+            }));
+            setCustomerSessionId(user.uid);
+            setLoggedInCapsterId(null);
+            setSessionRole('pelanggan');
+          } else {
+            setCustomerSessionId(null);
+            setSessionRole(null);
+          }
+        }
+      } catch {
+        if (active) setSyncStatus('reconnecting');
+      }
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [hydrated]);
+
+  useEffect(() => {
+    if (!hydrated || !firestore || !firebaseAuth?.currentUser || !sessionRole) return;
+    const user = firebaseAuth.currentUser;
+    const uid = user.uid;
+    let disposed = false;
+    const unsubscribers: Array<() => void> = [];
+    const cache: {
+      queuePublic: Array<Record<string, unknown>>;
+      queuePrivate: Array<Record<string, unknown>>;
+      bookingPublic: Array<Record<string, unknown>>;
+      bookingPrivate: Array<Record<string, unknown>>;
+      schedules: Array<Record<string, unknown> & { _id: string }>;
+      promos: Promo[];
+      customer: Customer | null;
+      profile: CapsterProfile | null;
+      quota: Record<string, unknown> | null;
+    } = {
+      queuePublic: [], queuePrivate: [], bookingPublic: [], bookingPrivate: [],
+      schedules: [], promos: [], customer: null, profile: null, quota: null,
+    };
+
+    const apply = () => {
+      if (disposed) return;
+      const mergeById = (publicRows: Array<Record<string, unknown>>, privateRows: Array<Record<string, unknown>>) => {
+        const merged = new Map<string, Record<string, unknown>>();
+        publicRows.forEach((row) => merged.set(String(row.id), row));
+        privateRows.forEach((row) => merged.set(String(row.id), { ...(merged.get(String(row.id)) || {}), ...row }));
+        return Array.from(merged.values());
+      };
+      const queues = mergeById(cache.queuePublic, cache.queuePrivate) as unknown as DataAntreanWalkin[];
+      const bookings = mergeById(cache.bookingPublic, cache.bookingPrivate) as unknown as DataBooking[];
+      const schedules = Object.fromEntries(cache.schedules.map((row) => [row._id, (() => {
+        const { _id, ...data } = row;
+        return data;
+      })()]));
+      const sessionKey = operationalDayKey;
+      const quota = cache.quota;
+      const quotaMap = quota ? {
+        [sessionKey]: {
+          tanggal: sessionKey,
+          kuotaMaksimal: Number(quota.kuotaMaksimal ?? quota.quotaMaximum ?? 15),
+          kuotaTerpakai: Number(quota.kuotaTerpakai ?? quota.quotaUsed ?? 0),
+        },
+      } : {};
+      setDbState((previous) => ({
+        ...previous,
+        customers: cache.customer ? [cache.customer] : (sessionRole === 'pelanggan' ? [] : previous.customers),
+        walkinQueue: queues,
+        bookings,
+        schedules,
+        promos: cache.promos.length ? cache.promos : previous.promos,
+        capsterProfile: cache.profile || previous.capsterProfile,
+        quotas: { ...previous.quotas, ...quotaMap },
+        lastUpdatedAt: Date.now(),
+      }));
+      setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
+    };
+
+    const onError = () => {
+      if (!disposed) setSyncStatus('reconnecting');
+    };
+    setSyncStatus('connecting');
+    const capster = sessionRole === 'capster';
+
+    const addCollectionListener = <T,>(
+      path: string,
+      assign: (rows: T[]) => void,
+      customerOnly = false
+    ) => {
+      const source = collection(firestore, path);
+      const ref = customerOnly ? query(source, where('customerUid', '==', uid)) : source;
+      unsubscribers.push(onSnapshot(ref, (snapshot) => {
+        assign(snapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as T));
+        setSyncStatus('connected');
+        apply();
+      }, onError));
+    };
+
+    addCollectionListener<Record<string, unknown>>('queuePublic', (rows) => { cache.queuePublic = rows; });
+    addCollectionListener<Record<string, unknown>>('bookingPublic', (rows) => { cache.bookingPublic = rows; });
+    addCollectionListener<Record<string, unknown> & { _id: string }>('schedules', (rows) => {
+      cache.schedules = rows.map((row) => ({ ...row, _id: String(row.id) }));
+    });
+    addCollectionListener<Promo>('promos', (rows) => { cache.promos = rows; });
+
+    const privateQueue = collection(firestore, 'queuePrivate');
+    const privateBooking = collection(firestore, 'bookingPrivate');
+    const queueQuery = capster ? privateQueue : query(privateQueue, where('customerUid', '==', uid));
+    const bookingQuery = capster ? privateBooking : query(privateBooking, where('customerUid', '==', uid));
+    unsubscribers.push(onSnapshot(queueQuery, (snapshot) => {
+      cache.queuePrivate = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+      setSyncStatus('connected');
+      apply();
+    }, onError));
+    unsubscribers.push(onSnapshot(bookingQuery, (snapshot) => {
+      cache.bookingPrivate = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+      setSyncStatus('connected');
+      apply();
+    }, onError));
+
+    if (!capster) {
+      unsubscribers.push(onSnapshot(doc(firestore, 'customers', uid), (snapshot) => {
+        cache.customer = snapshot.exists()
+          ? ({ id: uid, ...snapshot.data(), passwordHash: '' } as Customer)
+          : null;
+        apply();
+      }, onError));
+    }
+    unsubscribers.push(onSnapshot(doc(firestore, 'capsterProfile', 'hasan'), (snapshot) => {
+      cache.profile = snapshot.exists()
+        ? (snapshot.data() as CapsterProfile)
+        : getInitialCapsterProfile();
+      apply();
+    }, onError));
+    unsubscribers.push(onSnapshot(doc(firestore, 'queueSessions', operationalDayKey), (snapshot) => {
+      cache.quota = snapshot.exists() ? snapshot.data() : null;
+      apply();
+    }, onError));
+
+    return () => {
+      disposed = true;
+      unsubscribers.forEach((unsubscribe) => unsubscribe());
+    };
+  }, [hydrated, sessionRole, customerSessionId, loggedInCapsterId, operationalDayKey]);
 
   const shopStatus = useMemo(() => getShopOperationalStatus(nowMs), [nowMs]);
   const todayStr = shopStatus.todayStr;
