@@ -370,8 +370,26 @@ async function handleBookingCustomerCancel(uid: string, id: string, reschedule?:
       if (!current.exists || current.data()?.status !== 'Booked') throw new Error('INVALID_STATE');
       const booking = current.data()!;
       await releaseBookingLocks(tx, booking);
-      tx.update(ref, { status: 'Canceled', alasanBatal: 'manual', catatanBatal: 'Dibatalkan oleh pelanggan', canceledAt: Date.now() });
+      const canceledAt = Date.now();
+      const canceledBooking = {
+        ...booking,
+        status: 'Canceled',
+        alasanBatal: 'manual',
+        catatanBatal: 'Dibatalkan oleh pelanggan',
+        canceledAt,
+      };
+      tx.update(ref, {
+        status: 'Canceled', alasanBatal: 'manual',
+        catatanBatal: 'Dibatalkan oleh pelanggan', canceledAt,
+      });
       tx.set(publicRef, { status: 'Canceled' }, { merge: true });
+      persistSheetSyncJobInTransaction(
+        tx,
+        `booking-${id}-final`,
+        'updateTransaction',
+        bookingSheetValues(canceledBooking, { nama: booking.nama, nomorWhatsApp: booking.nomorWhatsApp }, 'Batal', 0),
+        { bookingCode: String(booking.kodeTiket), sourcePath: 'bookingPrivate', sourceId: id }
+      );
     });
     await syncBookingFinal(id, existing, { nama: existing.nama, nomorWhatsApp: existing.nomorWhatsApp }, 'Batal');
     return Response.json({ ok: true });
@@ -405,6 +423,13 @@ async function handleBookingCustomerCancel(uid: string, id: string, reschedule?:
     tx.set(ref, nextBooking, { merge: true });
     tx.set(publicRef, { capsterId, tanggal: date, jamSlot: startSlot, slotTercakup: newSlots }, { merge: true });
     newLockRefs.forEach((lockRef, i) => tx.set(lockRef, { status: 'Booked', bookingId: id, capsterId, tanggal: date, jam: newSlots[i] }));
+    persistSheetSyncJobInTransaction(
+      tx,
+      `booking-${id}-final`,
+      'updateTransaction',
+      bookingSheetValues(nextBooking, { nama: nextBooking.nama, nomorWhatsApp: nextBooking.nomorWhatsApp }, 'Booked (harga final dikonfirmasi capster)'),
+      { bookingCode: String(nextBooking.kodeTiket), sourcePath: 'bookingPrivate', sourceId: id }
+    );
     return nextBooking;
   });
   await syncBookingFinal(id, updatedBooking, { nama: existing.nama, nomorWhatsApp: existing.nomorWhatsApp }, 'Booked (harga final dikonfirmasi capster)');
