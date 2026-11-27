@@ -54,6 +54,7 @@ export function useBarberStore() {
   const [capsterSessionMessage, setCapsterSessionMessage] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<'connecting' | 'connected' | 'reconnecting' | 'offline'>('connecting');
   const serverOffsetRef = useRef(0);
+  const authActionInProgressRef = useRef(false);
 
   const isOffline = !browserOnline || syncStatus === 'offline';
   const isOfflineRef = useRef(isOffline);
@@ -207,6 +208,7 @@ export function useBarberStore() {
         barberService.logoutCustomer();
         return;
       }
+      if (authActionInProgressRef.current) return;
       try {
         const token = await user.getIdTokenResult();
         if (!active) return;
@@ -503,6 +505,7 @@ export function useBarberStore() {
       }
 
       const syntheticEmail = `${phone.normalized}@pelanggan.waktu-indonesia.app`;
+      authActionInProgressRef.current = true;
       try {
         const credential = await createUserWithEmailAndPassword(firebaseAuth, syntheticEmail, params.password);
         const result = await callCustomerAuthApi<Customer>('POST', {
@@ -539,6 +542,8 @@ export function useBarberStore() {
             ? 'Password terlalu lemah. Gunakan minimal 6 karakter.'
             : 'Pendaftaran gagal. Periksa koneksi dan coba lagi.';
         return { ok: false, errorCode: 'VALIDATION_ERROR', message };
+      } finally {
+        authActionInProgressRef.current = false;
       }
     },
     [dbState]
@@ -550,6 +555,7 @@ export function useBarberStore() {
       if (!phone.valid) return { ok: false, errorCode: 'VALIDATION_ERROR', message: phone.error };
       if (!password) return { ok: false, errorCode: 'VALIDATION_ERROR', message: 'Password wajib diisi.' };
       if (!firebaseAuth) return { ok: false, errorCode: 'INVALID_STATE', message: 'Firebase Authentication belum dikonfigurasi.' };
+      authActionInProgressRef.current = true;
       try {
         const credential = await signInWithEmailAndPassword(
           firebaseAuth,
@@ -570,6 +576,8 @@ export function useBarberStore() {
         return { ok: true, data: { customer, state: dbState } };
       } catch {
         return { ok: false, errorCode: 'UNAUTHORIZED', message: 'Nomor WhatsApp atau password salah.' };
+      } finally {
+        authActionInProgressRef.current = false;
       }
     },
     [dbState]
@@ -742,6 +750,7 @@ export function useBarberStore() {
         return { ok: false, errorCode: 'INVALID_STATE', message: 'Firebase Authentication belum dikonfigurasi.' };
       }
 
+      authActionInProgressRef.current = true;
       try {
         const credential = await signInWithEmailAndPassword(
           firebaseAuth,
@@ -795,6 +804,8 @@ export function useBarberStore() {
           ? 'Username atau password salah.'
           : 'Tidak dapat masuk. Periksa koneksi dan konfigurasi Firebase.';
         return { ok: false, errorCode: 'UNAUTHORIZED', message };
+      } finally {
+        authActionInProgressRef.current = false;
       }
     },
     [dbState.capsters]
