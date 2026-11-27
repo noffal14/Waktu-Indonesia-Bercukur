@@ -15,6 +15,8 @@ export async function GET(request: Request) {
   const now = Date.now();
   const due = await db.collection('bookingPrivate')
     .where('status', '==', 'Booked')
+    .orderBy('tanggal', 'asc')
+    .orderBy('jamSlot', 'asc')
     .limit(400)
     .get();
 
