@@ -114,8 +114,10 @@ async function syncBookingCreated(id: string, booking: any, customer: any) {
 }
 async function syncBookingFinal(id: string, booking: any, customer: any, status: string, finalTotal?: number) {
   const ref = getAdminDb().collection('bookingPrivate').doc(id);
+  const resolvedFinalTotal = status === 'Batal' ? (finalTotal ?? 0) : finalTotal;
+  const sheetValues = bookingSheetValues(booking, customer, status, resolvedFinalTotal);
   try {
-    await updateTransactionByCode(booking.kodeTiket, bookingSheetValues(booking, customer, status, finalTotal));
+    await updateTransactionByCode(booking.kodeTiket, sheetValues);
     await setSheetStatus(ref, 'synced', { sheetSyncError: FieldValue.delete(), sheetSyncAttempts: FieldValue.increment(1) });
     await getAdminDb().collection('sheetSyncQueue').doc(`booking-${id}-final`).set({
       status: 'synced',
@@ -125,7 +127,7 @@ async function syncBookingFinal(id: string, booking: any, customer: any, status:
     }, { merge: true });
   } catch (error) {
     await setSheetStatus(ref, 'failed', { sheetSyncError: String(error).slice(0, 500), sheetSyncAttempts: FieldValue.increment(1) });
-    await enqueueSheetSync(`booking-${id}-final`, 'updateTransaction', bookingSheetValues(booking, customer, status, finalTotal), { bookingCode: booking.kodeTiket, sourcePath: 'bookingPrivate', sourceId: id });
+    await enqueueSheetSync(`booking-${id}-final`, 'updateTransaction', sheetValues, { bookingCode: booking.kodeTiket, sourcePath: 'bookingPrivate', sourceId: id });
   }
 }
 async function syncCustomer(customer: any, visitCount?: number, lastVisit?: string, outboxJobId?: string) {
