@@ -53,8 +53,9 @@ export function useBarberStore() {
   );
   const [capsterSessionMessage, setCapsterSessionMessage] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<'connecting' | 'connected' | 'reconnecting' | 'offline'>('connecting');
+  const serverOffsetRef = useRef(0);
 
-  const isOffline = !browserOnline;
+  const isOffline = !browserOnline || syncStatus === 'offline';
   const isOfflineRef = useRef(isOffline);
   useEffect(() => {
     isOfflineRef.current = isOffline;
@@ -62,74 +63,68 @@ export function useBarberStore() {
 
   const syncStateFromStorage = useCallback(() => {
     if (isOfflineRef.current) return;
-    const currentNow = Date.now();
-    const next = barberService.syncAndGetState();
-    setDbState(next);
+    const currentNow = Date.now() + serverOffsetRef.current;
     setNowMs(currentNow);
     setLastSyncedFormatted(formatTimeWibHHMM(currentNow));
-    setLoggedInCapsterId(barberService.getCapsterSessionId());
   }, []);
 
   useEffect(() => {
     const hydrateTimer = window.setTimeout(() => {
-      setBrowserOnline(
-        typeof navigator !== 'undefined' ? navigator.onLine : true
-      );
-      syncStateFromStorage();
+      const online = typeof navigator !== 'undefined' ? navigator.onLine : true;
+      setBrowserOnline(online);
+      setSyncStatus(online ? 'connecting' : 'offline');
       setHydrated(true);
     }, 0);
 
     const handleOnline = () => {
       setBrowserOnline(true);
-      const currentNow = Date.now();
-      const synced = barberService.syncAndGetState();
-      setDbState(synced);
-      setNowMs(currentNow);
-      setLastSyncedFormatted(formatTimeWibHHMM(currentNow));
+      setSyncStatus('reconnecting');
     };
     const handleOffline = () => {
       setBrowserOnline(false);
+      setSyncStatus('offline');
     };
-    const handleStorage = () => {
-      syncStateFromStorage();
-    };
-    const handleVisibilityChange = () => {
-      if (
-        typeof document !== 'undefined' &&
-        document.visibilityState === 'visible' &&
-        !isOfflineRef.current
-      ) {
-        syncStateFromStorage();
-      }
-    };
-
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-    window.addEventListener('storage', handleStorage);
-    document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    // Jam WIB real-time berdetak setiap 1 detik
     const clockInterval = window.setInterval(() => {
-      setNowMs(Date.now());
+      const currentNow = Date.now() + serverOffsetRef.current;
+      setNowMs(currentNow);
     }, 1000);
-
-    // Evaluasi antrean/booking & sinkronisasi antar-tab setiap 2 detik
-    const syncInterval = window.setInterval(() => {
-      if (!isOfflineRef.current) {
-        syncStateFromStorage();
-      }
-    }, 2000);
 
     return () => {
       window.clearTimeout(hydrateTimer);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
-      window.removeEventListener('storage', handleStorage);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.clearInterval(clockInterval);
-      window.clearInterval(syncInterval);
     };
-  }, [syncStateFromStorage]);
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated || !browserOnline) return;
+    let active = true;
+    const refreshServerTime = async () => {
+      try {
+        const response = await fetch('/api/time', { cache: 'no-store' });
+        if (!response.ok) throw new Error('server-time-unavailable');
+        const payload = await response.json();
+        if (!active || typeof payload.serverTime !== 'number') return;
+        serverOffsetRef.current = payload.serverTime - Date.now();
+        const correctedNow = Date.now() + serverOffsetRef.current;
+        setNowMs(correctedNow);
+        setLastSyncedFormatted(formatTimeWibHHMM(correctedNow));
+      } catch {
+        if (active) setSyncStatus('reconnecting');
+      }
+    };
+    void refreshServerTime();
+    const interval = window.setInterval(() => void refreshServerTime(), 60_000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [hydrated, browserOnline]);
+
 
   useEffect(() => {
     if (!hydrated || sessionRole !== 'capster') return;
@@ -205,19 +200,34 @@ export function useBarberStore() {
     const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
       if (!active) return;
       if (!user) {
-        if (window.sessionStorage.getItem('wib_capster_session_id')) {
-          setCustomerSessionId(null);
-        } else {
-          setCustomerSessionId(null);
-          setSessionRole(null);
-          if (barberService.getSessionRole() === 'pelanggan') barberService.logoutCustomer();
-        }
+        setCustomerSessionId(null);
+        setLoggedInCapsterId(null);
+        setSessionRole(null);
+        barberService.logoutCapster();
+        barberService.logoutCustomer();
         return;
       }
       try {
         const token = await user.getIdTokenResult();
         if (!active) return;
         if (token.claims.role === 'capster') {
+          const sessionId = window.sessionStorage.getItem('wib_capster_session_id');
+          if (!sessionId) return; // First login creates its server session after Firebase sign-in.
+          const heartbeat = await fetch('/api/capster/heartbeat', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${await user.getIdToken()}`,
+              'x-capster-session-id': sessionId,
+            },
+            cache: 'no-store',
+          });
+          if (!active) return;
+          if (!heartbeat.ok) {
+            window.sessionStorage.removeItem('wib_capster_session_id');
+            setCapsterSessionMessage('Sesi berakhir karena akun masuk di perangkat lain');
+            await signOut(firebaseAuth).catch(() => undefined);
+            return;
+          }
           const local = barberService.activateCapsterSession('hasan');
           if (local.ok) {
             setLoggedInCapsterId('hasan');
@@ -231,16 +241,14 @@ export function useBarberStore() {
           if (!active) return;
           if (result.ok && result.data) {
             const customer = { ...result.data, id: user.uid, passwordHash: '' };
-            setDbState((previous) => ({
-              ...previous,
-              customers: [customer],
-            }));
+            setDbState((previous) => ({ ...previous, customers: [customer] }));
             setCustomerSessionId(user.uid);
             setLoggedInCapsterId(null);
             setSessionRole('pelanggan');
           } else {
             setCustomerSessionId(null);
             setSessionRole(null);
+            await signOut(firebaseAuth).catch(() => undefined);
           }
         }
       } catch {
@@ -254,9 +262,9 @@ export function useBarberStore() {
   }, [hydrated]);
 
   useEffect(() => {
-    if (!hydrated || !firestore || !firebaseAuth?.currentUser || !sessionRole) return;
-    const user = firebaseAuth.currentUser;
-    const uid = user.uid;
+    if (!hydrated || !firestore) return;
+    const user = firebaseAuth?.currentUser;
+    const uid = user?.uid || '';
     let disposed = false;
     const unsubscribers: Array<() => void> = [];
     const cache: {
@@ -342,18 +350,18 @@ export function useBarberStore() {
     const privateBooking = collection(firestore, 'bookingPrivate');
     const queueQuery = capster ? privateQueue : query(privateQueue, where('customerUid', '==', uid));
     const bookingQuery = capster ? privateBooking : query(privateBooking, where('customerUid', '==', uid));
-    unsubscribers.push(onSnapshot(queueQuery, (snapshot) => {
+    if (sessionRole) unsubscribers.push(onSnapshot(queueQuery, (snapshot) => {
       cache.queuePrivate = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
       setSyncStatus('connected');
       apply();
     }, onError));
-    unsubscribers.push(onSnapshot(bookingQuery, (snapshot) => {
+    if (sessionRole) unsubscribers.push(onSnapshot(bookingQuery, (snapshot) => {
       cache.bookingPrivate = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
       setSyncStatus('connected');
       apply();
     }, onError));
 
-    if (!capster) {
+    if (sessionRole === 'pelanggan' && uid) {
       unsubscribers.push(onSnapshot(doc(firestore, 'customers', uid), (snapshot) => {
         cache.customer = snapshot.exists()
           ? ({ id: uid, ...snapshot.data(), passwordHash: '' } as Customer)
@@ -1025,6 +1033,7 @@ export function useBarberStore() {
     activeCustomerBooking,
     isOffline,
     lastSyncedFormatted,
+    syncStatus,
     capsterSessionMessage,
     refreshFromStore: syncStateFromStorage,
     registerCustomer,
