@@ -61,12 +61,11 @@ const CUSTOMER_SESSION_ID_KEY = 'wib_customer_session_id';
 const CAPSTER_SESSION_ID_KEY = 'wib_capster_session_id';
 
 /**
- * CATATAN KEAMANAN PRODUKSI:
- * Aplikasi ini menggunakan penyimpanan browser (localStorage) tanpa backend.
- * Password (termasuk akun sistem capster dan akun pelanggan) disimpan dalam bentuk
- * hash sederhana, bukan teks polos. Untuk lingkungan produksi, WAJIB gunakan
- * backend server atau Firebase Auth dengan hashing kriptografis server-side
- * (bcrypt/argon2) dan manajemen sesi terverifikasi server.
+ * CATATAN MIGRASI:
+ * Autentikasi capster menggunakan Firebase Authentication.
+ * Autentikasi pelanggan pada service legacy ini masih menyimpan hash password
+ * dan data bisnis di localStorage. Jangan gunakan pola ini sebagai keamanan
+ * produksi; migrasikan pelanggan ke Firebase Auth dan data operasional ke Firestore.
  */
 export function hashPasswordDemo(password: string): string {
   const salted = `wib_barber_salt_2026::${password}`;
