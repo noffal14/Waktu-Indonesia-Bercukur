@@ -1,4 +1,5 @@
-import 'dotenv/config';
+import { loadEnvConfig } from '@next/env';
+loadEnvConfig(process.cwd());
 import { cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 
