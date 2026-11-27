@@ -1,13 +1,14 @@
 name: Build
 
 on:
-  push:
-    branches:
-      - main
-      - feat/firebase-backend-foundation
   pull_request:
     branches:
       - main
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: wib-build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   next-build:
