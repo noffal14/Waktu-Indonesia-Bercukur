@@ -228,12 +228,9 @@ export function useBarberStore() {
             await signOut(firebaseAuth).catch(() => undefined);
             return;
           }
-          const local = barberService.activateCapsterSession('hasan');
-          if (local.ok) {
-            setLoggedInCapsterId('hasan');
-            setCustomerSessionId(null);
-            setSessionRole('capster');
-          }
+          setLoggedInCapsterId('hasan');
+          setCustomerSessionId(null);
+          setSessionRole('capster');
           return;
         }
         if (user.email?.endsWith('@pelanggan.waktu-indonesia.app')) {
@@ -771,8 +768,8 @@ export function useBarberStore() {
         }
 
         window.sessionStorage.setItem('wib_capster_session_id', payload.sessionId);
-        const localSession = barberService.activateCapsterSession('hasan');
-        if (!localSession.ok || !localSession.data) {
+        const localSession = dbState.capsters.find((capster) => capster.id === 'hasan');
+        if (!localSession) {
           await fetch('/api/capster/session', {
             method: 'DELETE',
             headers: {
@@ -781,15 +778,15 @@ export function useBarberStore() {
             },
           }).catch(() => undefined);
           await signOut(firebaseAuth);
-          return localSession;
+          return { ok: false, errorCode: 'NOT_FOUND', message: 'Data capster tidak ditemukan.' };
         }
 
         setCapsterSessionMessage(null);
         setSessionRole('capster');
-        setLoggedInCapsterId(localSession.data.id);
+        setLoggedInCapsterId(localSession.id);
         setCustomerSessionId(null);
         setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
-        return localSession;
+        return { ok: true, data: localSession };
       } catch (error) {
         const code = (error as { code?: string }).code;
         const message = code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found'
@@ -798,7 +795,7 @@ export function useBarberStore() {
         return { ok: false, errorCode: 'UNAUTHORIZED', message };
       }
     },
-    []
+    [dbState.capsters]
   );
 
   const logoutCapster = useCallback(async () => {
