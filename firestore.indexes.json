@@ -4,8 +4,46 @@
       "collectionGroup": "queuePrivate",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "operationalDayKey", "order": "ASCENDING" }
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "operationalDayKey",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "queuePublic",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "kunciHariOperasional",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "bookingPrivate",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "tanggal",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "jamSlot",
+          "order": "ASCENDING"
+        }
       ]
     }
   ],
