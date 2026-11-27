@@ -321,7 +321,7 @@ export function useBarberStore() {
     };
 
     const onError = () => {
-      if (!disposed) setSyncStatus('reconnecting');
+      if (!disposed) setSyncStatus(typeof navigator !== 'undefined' && navigator.onLine ? 'reconnecting' : 'offline');
     };
     setSyncStatus('connecting');
     const capster = sessionRole === 'capster';
@@ -335,7 +335,7 @@ export function useBarberStore() {
       const ref = customerOnly ? query(source, where('customerUid', '==', uid)) : source;
       unsubscribers.push(onSnapshot(ref, (snapshot) => {
         assign(snapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as T));
-        setSyncStatus('connected');
+        setSyncStatus(typeof navigator !== 'undefined' && navigator.onLine ? 'connected' : 'offline');
         apply();
       }, onError));
     };
