@@ -4,8 +4,7 @@ import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { verifyCapsterRequest, CapsterAuthError, capsterErrorResponse } from '@/lib/server/capster-auth';
 import { getOperationalSessionKey, getOperationalHoursForDate, generateHourSlots, parseWibEpochMs, getWibParts, formatWibIsoDateTime, LATE_TOLERANCE_MINUTES, RESCHEDULE_MIN_LEAD_MINUTES } from '@/lib/barbershop-config';
 import { calculateServicesPricing, getInitialSystemPromos, isPromoActiveNow } from '@/lib/services-catalog';
-import { appendTransactionOnce, updateTransactionByCode, upsertCustomerByWhatsApp } from '@/lib/google-sheets';
-import { enqueueSheetSync } from '@/lib/sheets-outbox';
+import { drainSheetSyncQueue } from '@/lib/sheets-outbox';
 import { getInitialCapsterProfile, normalizeWaToLocal08, normalizeWaTo628, validateInstagramHandle } from '@/lib/capster-profile';
 
 export const dynamic = 'force-dynamic';
@@ -93,64 +92,22 @@ function customerSheetValues(customer: any, visitCount?: number, lastVisit?: str
     'Total Kunjungan': visitCount ?? Number(customer.totalKunjungan || 0),
   };
 }
-async function setSheetStatus(ref: FirebaseFirestore.DocumentReference, status: 'synced' | 'failed' | 'pending', extra: Record<string, unknown> = {}) {
-  await ref.set({ sheetSyncStatus: status, sheetSyncUpdatedAt: Date.now(), ...extra }, { merge: true });
+async function syncBookingCreated(_id: string, _booking: any, _customer: any) {
+  // The transactional outbox is the single writer for direct and scheduled sync.
+  await drainSheetSyncQueue(50).catch((error) => {
+    console.error('[sheet-outbox-drain]', error);
+  });
 }
-async function syncBookingCreated(id: string, booking: any, customer: any) {
-  const ref = getAdminDb().collection('bookingPrivate').doc(id);
-  try {
-    const result = await appendTransactionOnce(bookingSheetValues(booking, customer, 'Booked (harga final dikonfirmasi capster)'));
-    await setSheetStatus(ref, 'synced', { sheetRowRef: result.rowNumber || null, sheetSyncError: FieldValue.delete() });
-    await getAdminDb().collection('sheetSyncQueue').doc(`booking-${id}-append`).set({
-      status: 'synced',
-      syncedAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-      lastError: FieldValue.delete(),
-    }, { merge: true });
-  } catch (error) {
-    await setSheetStatus(ref, 'failed', { sheetSyncError: String(error).slice(0, 500), sheetSyncAttempts: FieldValue.increment(1) });
-    await enqueueSheetSync(`booking-${id}-append`, 'appendTransaction', bookingSheetValues(booking, customer, 'Booked (harga final dikonfirmasi capster)'), { sourcePath: 'bookingPrivate', sourceId: id });
-  }
+async function syncBookingFinal(_id: string, _booking: any, _customer: any, _status: string, _finalTotal?: number) {
+  await drainSheetSyncQueue(50).catch((error) => {
+    console.error('[sheet-outbox-drain]', error);
+  });
 }
-async function syncBookingFinal(id: string, booking: any, customer: any, status: string, finalTotal?: number) {
-  const ref = getAdminDb().collection('bookingPrivate').doc(id);
-  const resolvedFinalTotal = status === 'Batal' ? (finalTotal ?? 0) : finalTotal;
-  const sheetValues = bookingSheetValues(booking, customer, status, resolvedFinalTotal);
-  try {
-    await updateTransactionByCode(booking.kodeTiket, sheetValues);
-    await setSheetStatus(ref, 'synced', { sheetSyncError: FieldValue.delete(), sheetSyncAttempts: FieldValue.increment(1) });
-    await getAdminDb().collection('sheetSyncQueue').doc(`booking-${id}-final`).set({
-      status: 'synced',
-      syncedAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-      lastError: FieldValue.delete(),
-    }, { merge: true });
-  } catch (error) {
-    await setSheetStatus(ref, 'failed', { sheetSyncError: String(error).slice(0, 500), sheetSyncAttempts: FieldValue.increment(1) });
-    await enqueueSheetSync(`booking-${id}-final`, 'updateTransaction', sheetValues, { bookingCode: booking.kodeTiket, sourcePath: 'bookingPrivate', sourceId: id });
-  }
-}
-async function syncCustomer(customer: any, visitCount?: number, lastVisit?: string, outboxJobId?: string) {
-  const values = customerSheetValues(customer, visitCount, lastVisit);
-  try {
-    await upsertCustomerByWhatsApp(values);
-    if (outboxJobId) {
-      await getAdminDb().collection('sheetSyncQueue').doc(outboxJobId).set({
-        status: 'synced',
-        syncedAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
-        lastError: FieldValue.delete(),
-      }, { merge: true });
-    }
-  } catch (error) {
-    console.error('[sheet-customer-sync]', error);
-    await enqueueSheetSync(
-      outboxJobId || `customer-${String(customer.nomorWhatsApp || 'unknown')}-${Date.now()}`,
-      'upsertCustomer',
-      values,
-      outboxJobId ? { sourcePath: 'customers', sourceId: String(customer.uid || '') } : {}
-    );
-  }
+async function syncCustomer(_customer: any, _visitCount?: number, _lastVisit?: string, outboxJobId?: string) {
+  if (!outboxJobId) return;
+  await drainSheetSyncQueue(50).catch((error) => {
+    console.error('[sheet-outbox-drain]', error);
+  });
 }
 
 async function userContext(request: Request) {
@@ -341,7 +298,6 @@ async function handleBookingCreate(uid: string, body: any) {
   });
 
   await syncBookingCreated(id, booking, customer);
-  await syncCustomer(customer);
   return Response.json({ ok: true, data: { booking } });
 }
 
@@ -761,19 +717,9 @@ async function handleCapsterAction(action: StoreAction, body: any) {
         return { completedQueue, customer, visits };
       });
 
-      try {
-        const synced = await appendTransactionOnce(sheetValues);
-        await ref.set({ sheetSyncStatus: 'synced', sheetRowRef: synced.rowNumber || null, sheetSyncError: FieldValue.delete() }, { merge: true });
-        await db.collection('sheetSyncQueue').doc(`walkin-${id}-append`).set({
-          status: 'synced',
-          syncedAt: FieldValue.serverTimestamp(),
-          updatedAt: FieldValue.serverTimestamp(),
-          lastError: FieldValue.delete(),
-        }, { merge: true });
-      } catch (error) {
-        await ref.set({ sheetSyncStatus: 'failed', sheetSyncError: String(error).slice(0, 500) }, { merge: true });
-        await enqueueSheetSync(`walkin-${id}-append`, 'appendTransaction', sheetValues, { sourcePath: 'queuePrivate', sourceId: id });
-      }
+      await drainSheetSyncQueue(50).catch((error) => {
+        console.error('[sheet-outbox-drain]', error);
+      });
       if (completed.customer) {
         await syncCustomer(completed.customer, completed.visits, q.tanggal, `walkin-${id}-customer`);
       }
