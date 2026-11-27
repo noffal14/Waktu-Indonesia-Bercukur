@@ -749,7 +749,7 @@ export function useBarberStore() {
     async (walkinId: string): Promise<ServiceResult<BarberDatabaseState>> => {
       if (!customerSessionId) return { ok: false, errorCode: 'AUTH_REQUIRED', message: 'Silakan masuk ke akun terlebih dahulu.' };
       if (isOfflineRef.current) return { ok: false, errorCode: 'INVALID_STATE', message: 'Koneksi terputus.' };
-      const result = await commitStoreAction('queue.cancel', { id: walkinId });
+      const result = await commitStoreAction<BarberDatabaseState>('queue.cancel', { id: walkinId });
       return result.ok ? { ok: true, data: dbState } : result;
     },
     [customerSessionId, commitStoreAction, dbState]
@@ -788,7 +788,7 @@ export function useBarberStore() {
     }): Promise<ServiceResult<BarberDatabaseState>> => {
       if (isOfflineRef.current) return { ok: false, errorCode: 'INVALID_STATE', message: 'Koneksi terputus. Sambungkan internet untuk mengubah jadwal.' };
       if (!customerSessionId) return { ok: false, errorCode: 'AUTH_REQUIRED', message: 'Silakan masuk ke akun terlebih dahulu.' };
-      const result = await commitStoreAction('booking.reschedule', {
+      const result = await commitStoreAction<BarberDatabaseState>('booking.reschedule', {
         id: params.bookingId,
         capsterId: params.newCapsterId,
         tanggal: params.newTanggal,
@@ -802,7 +802,7 @@ export function useBarberStore() {
   const cancelCustomerBooking = useCallback(
     async (bookingId: string): Promise<ServiceResult<BarberDatabaseState>> => {
       if (!customerSessionId) return { ok: false, errorCode: 'AUTH_REQUIRED', message: 'Silakan masuk ke akun terlebih dahulu.' };
-      const result = await commitStoreAction('booking.cancel', { id: bookingId });
+      const result = await commitStoreAction<BarberDatabaseState>('booking.cancel', { id: bookingId });
       return result.ok ? { ok: true, data: dbState } : result;
     },
     [customerSessionId, commitStoreAction, dbState]
@@ -907,7 +907,7 @@ export function useBarberStore() {
 
   const callWalkin = useCallback(
     async (walkinId: string, _capsterId?: string): Promise<ServiceResult<BarberDatabaseState>> => {
-      const result = await commitStoreAction('queue.call', { id: walkinId });
+      const result = await commitStoreAction<BarberDatabaseState>('queue.call', { id: walkinId });
       return result.ok ? { ok: true, data: dbState } : result;
     },
     [commitStoreAction, dbState]
@@ -915,7 +915,7 @@ export function useBarberStore() {
 
   const completeWalkin = useCallback(
     async (walkinId: string, overrideDurationMinutes?: number, selectedServices?: SelectedServiceInput[], finalTotal?: number): Promise<ServiceResult<BarberDatabaseState>> => {
-      const result = await commitStoreAction('queue.complete', {
+      const result = await commitStoreAction<BarberDatabaseState>('queue.complete', {
         id: walkinId,
         durationMinutes: overrideDurationMinutes,
         selectedServices: selectedServices || [],
@@ -928,7 +928,7 @@ export function useBarberStore() {
 
   const cancelWalkin = useCallback(
     async (walkinId: string): Promise<ServiceResult<BarberDatabaseState>> => {
-      const result = await commitStoreAction('queue.capsterCancel', { id: walkinId });
+      const result = await commitStoreAction<BarberDatabaseState>('queue.capsterCancel', { id: walkinId });
       return result.ok ? { ok: true, data: dbState } : result;
     },
     [commitStoreAction, dbState]
@@ -936,7 +936,7 @@ export function useBarberStore() {
 
   const startBookingService = useCallback(
     async (bookingId: string): Promise<ServiceResult<BarberDatabaseState>> => {
-      const result = await commitStoreAction('booking.start', { id: bookingId });
+      const result = await commitStoreAction<BarberDatabaseState>('booking.start', { id: bookingId });
       return result.ok ? { ok: true, data: dbState } : result;
     },
     [commitStoreAction, dbState]
@@ -945,7 +945,7 @@ export function useBarberStore() {
   const completeBooking = useCallback(
     async (bookingId: string, overrideDurationMinutes?: number, finalTotal?: number): Promise<ServiceResult<BarberDatabaseState>> => {
       const booking = dbState.bookings.find((item) => item.id === bookingId);
-      const result = await commitStoreAction('booking.complete', {
+      const result = await commitStoreAction<BarberDatabaseState>('booking.complete', {
         id: bookingId,
         durationMinutes: overrideDurationMinutes,
         finalTotal: finalTotal ?? booking?.totalEstimasiMin ?? booking?.subtotalHarga ?? 0,
@@ -957,7 +957,7 @@ export function useBarberStore() {
 
   const cancelBookingManual = useCallback(
     async (bookingId: string): Promise<ServiceResult<BarberDatabaseState>> => {
-      const result = await commitStoreAction('booking.capsterCancel', { id: bookingId });
+      const result = await commitStoreAction<BarberDatabaseState>('booking.capsterCancel', { id: bookingId });
       return result.ok ? { ok: true, data: dbState } : result;
     },
     [commitStoreAction, dbState]
@@ -965,7 +965,7 @@ export function useBarberStore() {
 
   const updateDailyQuota = useCallback(
     async (targetOperationalDayKey: string, maxQuota: number): Promise<ServiceResult<BarberDatabaseState>> => {
-      const result = await commitStoreAction('quota.update', {
+      const result = await commitStoreAction<BarberDatabaseState>('quota.update', {
         operationalDayKey: targetOperationalDayKey,
         maxQuota,
       });
@@ -982,7 +982,7 @@ export function useBarberStore() {
       alasanLibur?: string;
       forceCancelConflicts?: boolean;
     }): Promise<ServiceResult<BarberDatabaseState>> => {
-      const result = await commitStoreAction('schedule.dayOff', params as unknown as Record<string, unknown>);
+      const result = await commitStoreAction<BarberDatabaseState>('schedule.dayOff', params as unknown as Record<string, unknown>);
       return result.ok ? { ok: true, data: dbState } : result;
     },
     [commitStoreAction, dbState]
@@ -997,7 +997,7 @@ export function useBarberStore() {
       catatan?: string;
       forceCancelConflict?: boolean;
     }): Promise<ServiceResult<BarberDatabaseState>> => {
-      const result = await commitStoreAction('schedule.slot', params as unknown as Record<string, unknown>);
+      const result = await commitStoreAction<BarberDatabaseState>('schedule.slot', params as unknown as Record<string, unknown>);
       return result.ok ? { ok: true, data: dbState } : result;
     },
     [commitStoreAction, dbState]
@@ -1014,7 +1014,7 @@ export function useBarberStore() {
       berlakuDari?: string;
       berlakuSampai?: string;
     }): Promise<ServiceResult<BarberDatabaseState>> => {
-      const result = await commitStoreAction('promo.create', { params });
+      const result = await commitStoreAction<BarberDatabaseState>('promo.create', { params });
       return result.ok ? { ok: true, data: dbState } : result;
     },
     [commitStoreAction, dbState]
@@ -1031,7 +1031,7 @@ export function useBarberStore() {
       berlakuDari?: string;
       berlakuSampai?: string;
     }): Promise<ServiceResult<BarberDatabaseState>> => {
-      const result = await commitStoreAction('promo.update', { promoId, params });
+      const result = await commitStoreAction<BarberDatabaseState>('promo.update', { promoId, params });
       return result.ok ? { ok: true, data: dbState } : result;
     },
     [commitStoreAction, dbState]
@@ -1039,7 +1039,7 @@ export function useBarberStore() {
 
   const togglePromoActive = useCallback(
     async (promoId: string): Promise<ServiceResult<BarberDatabaseState>> => {
-      const result = await commitStoreAction('promo.toggle', { promoId });
+      const result = await commitStoreAction<BarberDatabaseState>('promo.toggle', { promoId });
       return result.ok ? { ok: true, data: dbState } : result;
     },
     [commitStoreAction, dbState]
@@ -1047,7 +1047,7 @@ export function useBarberStore() {
 
   const deletePromo = useCallback(
     async (promoId: string): Promise<ServiceResult<BarberDatabaseState>> => {
-      const result = await commitStoreAction('promo.delete', { promoId });
+      const result = await commitStoreAction<BarberDatabaseState>('promo.delete', { promoId });
       return result.ok ? { ok: true, data: dbState } : result;
     },
     [commitStoreAction, dbState]
@@ -1060,7 +1060,7 @@ export function useBarberStore() {
       instagramCapster: string;
       instagramBarbershop: string;
     }): Promise<ServiceResult<BarberDatabaseState>> => {
-      const result = await commitStoreAction('profile.update', { params });
+      const result = await commitStoreAction<BarberDatabaseState>('profile.update', { params });
       return result.ok ? { ok: true, data: dbState } : result;
     },
     [commitStoreAction, dbState]
