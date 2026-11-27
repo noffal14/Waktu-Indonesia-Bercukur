@@ -636,139 +636,89 @@ export function useBarberStore() {
   // =========================================================================
 
   const takeWalkinQueue = useCallback(
-    (params: { customerId?: string; capsterId?: string }) => {
+    async (params: { customerId?: string; capsterId?: string }): Promise<ServiceResult<{
+      ticket: DataAntreanWalkin;
+      antreanDiDepan: number;
+      estimasiMenit: number;
+      state: BarberDatabaseState;
+    }>> => {
       if (isOfflineRef.current) {
-        return {
-          ok: false,
-          errorCode: 'INVALID_STATE' as const,
-          message:
-            'Koneksi terputus. Tidak dapat mengambil nomor antrean baru saat offline.',
-        };
+        return { ok: false, errorCode: 'INVALID_STATE', message: 'Koneksi terputus. Tidak dapat mengambil antrean baru.' };
       }
-      const res = barberService.takeWalkinQueue({
-        customerId: params.customerId || customerSessionId || undefined,
-        capsterId: params.capsterId,
-      });
-      if (res.ok && res.data) {
-        setDbState(res.data.state);
-        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
-      } else {
-        syncStateFromStorage();
+      const result = await commitStoreAction<{
+        ticket: DataAntreanWalkin;
+        antreanDiDepan: number;
+        estimasiMenit: number;
+      }>('queue.take', { capsterId: params.capsterId });
+      if (!result.ok || !result.data) {
+        return { ok: false, errorCode: result.errorCode, message: result.message };
       }
-      return res;
+      return { ok: true, data: { ...result.data, state: dbState } };
     },
-    [customerSessionId, syncStateFromStorage]
+    [commitStoreAction, dbState]
   );
 
   const cancelCustomerWalkin = useCallback(
-    (walkinId: string) => {
-      if (!customerSessionId) {
-        return {
-          ok: false,
-          errorCode: 'AUTH_REQUIRED' as const,
-          message: 'Silakan masuk ke akun terlebih dahulu.',
-        };
-      }
-      const res = barberService.cancelCustomerWalkin(
-        walkinId,
-        customerSessionId
-      );
-      if (res.ok && res.data) {
-        setDbState(res.data);
-        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
-      }
-      return res;
+    async (walkinId: string): Promise<ServiceResult<BarberDatabaseState>> => {
+      if (!customerSessionId) return { ok: false, errorCode: 'AUTH_REQUIRED', message: 'Silakan masuk ke akun terlebih dahulu.' };
+      if (isOfflineRef.current) return { ok: false, errorCode: 'INVALID_STATE', message: 'Koneksi terputus.' };
+      const result = await commitStoreAction('queue.cancel', { id: walkinId });
+      return result.ok ? { ok: true, data: dbState } : result;
     },
-    [customerSessionId]
+    [customerSessionId, commitStoreAction, dbState]
   );
 
   const createBooking = useCallback(
-    (params: {
+    async (params: {
       customerId?: string;
       capsterId: string;
       tanggal: string;
       jamSlot: string;
       selectedServices?: SelectedServiceInput[];
-    }) => {
-      if (isOfflineRef.current) {
-        return {
-          ok: false,
-          errorCode: 'INVALID_STATE' as const,
-          message:
-            'Koneksi terputus. Sambungkan internet untuk mengunci slot booking.',
-        };
-      }
-      const res = barberService.createBooking({
-        ...params,
-        customerId: params.customerId || customerSessionId || undefined,
+    }): Promise<ServiceResult<{ booking: DataBooking; state: BarberDatabaseState }>> => {
+      if (isOfflineRef.current) return { ok: false, errorCode: 'INVALID_STATE', message: 'Koneksi terputus. Sambungkan internet untuk mengunci slot booking.' };
+      if (!customerSessionId) return { ok: false, errorCode: 'AUTH_REQUIRED', message: 'Silakan masuk ke akun terlebih dahulu.' };
+      const result = await commitStoreAction<{ booking: DataBooking }>('booking.create', {
+        capsterId: params.capsterId,
+        tanggal: params.tanggal,
+        jamSlot: params.jamSlot,
+        selectedServices: params.selectedServices || [],
       });
-      if (res.ok && res.data) {
-        setDbState(res.data.state);
-        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
-      } else {
-        syncStateFromStorage();
+      if (!result.ok || !result.data?.booking) {
+        return { ok: false, errorCode: result.errorCode, message: result.message };
       }
-      return res;
+      return { ok: true, data: { booking: result.data.booking, state: dbState } };
     },
-    [customerSessionId, syncStateFromStorage]
+    [customerSessionId, commitStoreAction, dbState]
   );
 
   const rescheduleBooking = useCallback(
-    (params: {
+    async (params: {
       bookingId: string;
       newCapsterId: string;
       newTanggal: string;
       newJamSlot: string;
-    }) => {
-      if (isOfflineRef.current) {
-        return {
-          ok: false,
-          errorCode: 'INVALID_STATE' as const,
-          message: 'Koneksi terputus. Sambungkan internet untuk mengubah jadwal.',
-        };
-      }
-      if (!customerSessionId) {
-        return {
-          ok: false,
-          errorCode: 'AUTH_REQUIRED' as const,
-          message: 'Silakan masuk ke akun terlebih dahulu.',
-        };
-      }
-      const res = barberService.rescheduleBooking({
-        ...params,
-        customerId: customerSessionId,
+    }): Promise<ServiceResult<BarberDatabaseState>> => {
+      if (isOfflineRef.current) return { ok: false, errorCode: 'INVALID_STATE', message: 'Koneksi terputus. Sambungkan internet untuk mengubah jadwal.' };
+      if (!customerSessionId) return { ok: false, errorCode: 'AUTH_REQUIRED', message: 'Silakan masuk ke akun terlebih dahulu.' };
+      const result = await commitStoreAction('booking.reschedule', {
+        id: params.bookingId,
+        capsterId: params.newCapsterId,
+        tanggal: params.newTanggal,
+        jamSlot: params.newJamSlot,
       });
-      if (res.ok && res.data) {
-        setDbState(res.data.state);
-        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
-      } else {
-        syncStateFromStorage();
-      }
-      return res;
+      return result.ok ? { ok: true, data: dbState } : result;
     },
-    [customerSessionId, syncStateFromStorage]
+    [customerSessionId, commitStoreAction, dbState]
   );
 
   const cancelCustomerBooking = useCallback(
-    (bookingId: string) => {
-      if (!customerSessionId) {
-        return {
-          ok: false,
-          errorCode: 'AUTH_REQUIRED' as const,
-          message: 'Silakan masuk ke akun terlebih dahulu.',
-        };
-      }
-      const res = barberService.cancelCustomerBooking(
-        bookingId,
-        customerSessionId
-      );
-      if (res.ok && res.data) {
-        setDbState(res.data);
-        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
-      }
-      return res;
+    async (bookingId: string): Promise<ServiceResult<BarberDatabaseState>> => {
+      if (!customerSessionId) return { ok: false, errorCode: 'AUTH_REQUIRED', message: 'Silakan masuk ke akun terlebih dahulu.' };
+      const result = await commitStoreAction('booking.cancel', { id: bookingId });
+      return result.ok ? { ok: true, data: dbState } : result;
     },
-    [customerSessionId]
+    [customerSessionId, commitStoreAction, dbState]
   );
 
   // =========================================================================
