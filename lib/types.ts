@@ -83,7 +83,7 @@ export interface Capster {
   spesialisasi: string;
   pengalaman: string;
   username: string;
-  passwordHash: string;
+  passwordHash?: string;
   fotoKey: 'hasan';
 }
 
