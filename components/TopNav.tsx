@@ -11,6 +11,9 @@ import {
   Scissors,
   Ticket,
   User,
+  Wifi,
+  WifiOff,
+  RefreshCw,
 } from 'lucide-react';
 import { AppView, Customer } from '@/lib/types';
 
@@ -19,6 +22,9 @@ interface TopNavProps {
   onNavigate: (view: AppView) => void;
   currentCustomer: Customer | null;
   onLogoutCustomer: () => void;
+  syncStatus: 'connecting' | 'connected' | 'reconnecting' | 'offline';
+  isOffline: boolean;
+  lastSyncedFormatted: string;
 }
 
 const DESKTOP_NAV_ITEMS: { id: AppView; label: string }[] = [
@@ -43,6 +49,9 @@ export function TopNav({
   onNavigate,
   currentCustomer,
   onLogoutCustomer,
+  syncStatus,
+  isOffline,
+  lastSyncedFormatted,
 }: TopNavProps) {
   const renderMobileIcon = (id: AppView, active: boolean) => {
     const cls = `w-5 h-5 ${active ? 'text-amber-400' : 'text-zinc-400'}`;
@@ -100,8 +109,30 @@ export function TopNav({
             })}
           </nav>
 
-          {/* Zone 3: Customer Auth Only (Tanpa Tautan Dashboard Capster) */}
+          {/* Zone 3: Connection state and customer auth */}
           <div className="flex items-center gap-2 shrink-0">
+            <div
+              title={`Update terakhir ${lastSyncedFormatted} WIB`}
+              aria-label={`Koneksi ${isOffline || syncStatus === 'offline' ? 'offline' : syncStatus === 'connected' ? 'realtime terhubung' : syncStatus === 'reconnecting' ? 'menghubungkan ulang' : 'menghubungkan'}; update terakhir ${lastSyncedFormatted} WIB`}
+              className={`inline-flex items-center gap-1 rounded-md border px-1.5 sm:px-2 py-1 text-[10px] font-medium whitespace-nowrap ${
+                isOffline || syncStatus === 'offline'
+                  ? 'border-rose-500/30 bg-rose-950/30 text-rose-300'
+                  : syncStatus === 'connected'
+                    ? 'border-emerald-500/30 bg-emerald-950/20 text-emerald-300'
+                    : 'border-amber-500/30 bg-amber-950/20 text-amber-300'
+              }`}
+            >
+              {isOffline || syncStatus === 'offline' ? (
+                <WifiOff className="h-3 w-3" />
+              ) : syncStatus === 'connected' ? (
+                <Wifi className="h-3 w-3" />
+              ) : (
+                <RefreshCw className="h-3 w-3 animate-spin" />
+              )}
+              <span className="hidden sm:inline">
+                {isOffline || syncStatus === 'offline' ? 'Offline' : syncStatus === 'connected' ? 'Realtime' : syncStatus === 'reconnecting' ? 'Reconnect' : 'Connect'}
+              </span>
+            </div>
             {currentCustomer ? (
               <>
                 <button
