@@ -32,10 +32,11 @@ export function CapsterDashboardShell() {
 
   const isAuthorized =
     store.hydrated &&
+    store.authReady &&
     store.sessionRole === 'capster' &&
     Boolean(store.loggedInCapster);
 
-  const shouldRejectToHome = store.hydrated && !isAuthorized && !loggingOut;
+  const shouldRejectToHome = store.hydrated && store.authReady && !isAuthorized && !loggingOut;
 
   useEffect(() => {
     if (shouldRejectToHome) {
@@ -46,7 +47,7 @@ export function CapsterDashboardShell() {
     }
   }, [shouldRejectToHome, router]);
 
-  if (!store.hydrated || loggingOut) {
+  if (!store.hydrated || !store.authReady || loggingOut) {
     return (
       <div className="min-h-screen bg-[#0B0B0D] text-[#F5F5F4] flex items-center justify-center p-4">
         <div className="w-full max-w-md h-48 rounded-2xl bg-zinc-900/70 border border-zinc-800 animate-pulse" />
