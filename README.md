@@ -4,10 +4,11 @@
 
 1. Buat project di Firebase Console.
 2. Aktifkan Firebase Authentication dengan metode Email/Password.
-3. Buat Firestore Database.
-4. Daftarkan Web App dan salin konfigurasi ke variabel `NEXT_PUBLIC_FIREBASE_*`.
-5. Buat service account untuk Firebase Admin SDK. Simpan project ID, client email, dan private key di environment server sebagai `FIREBASE_ADMIN_*`.
-6. Deploy rules dan index:
+3. Tambahkan domain production Vercel dan `localhost` ke daftar Authorized domains Firebase Authentication.
+4. Buat Firestore Database.
+5. Daftarkan Web App dan salin konfigurasi ke variabel `NEXT_PUBLIC_FIREBASE_*`.
+6. Buat service account untuk Firebase Admin SDK. Simpan project ID, client email, dan private key di environment server sebagai `FIREBASE_ADMIN_*`.
+7. Deploy rules dan index:
 
    ```bash
    npx firebase deploy --only firestore:rules,firestore:indexes
