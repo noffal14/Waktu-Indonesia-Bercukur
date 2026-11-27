@@ -8,13 +8,14 @@
 4. Buat Firestore Database.
 5. Daftarkan Web App dan salin konfigurasi ke variabel `NEXT_PUBLIC_FIREBASE_*`.
 6. Buat service account untuk Firebase Admin SDK. Simpan project ID, client email, dan private key di environment server sebagai `FIREBASE_ADMIN_*`.
-7. Deploy rules dan index:
+7. Salin `.firebaserc.example` menjadi `.firebaserc`, lalu ganti `YOUR_FIREBASE_PROJECT_ID` dengan project ID Firebase kamu. File `.firebaserc` diabaikan Git.
+8. Login ke Firebase CLI dengan `npx --yes firebase-tools@latest login`, lalu deploy rules dan index:
 
    ```bash
    npm run deploy:firestore
    ```
 
-7. Isi `CAPSTER_INITIAL_PASSWORD` (minimal 12 karakter dan unik) di environment lokal/server, lalu jalankan seed sekali:
+9. Isi `CAPSTER_INITIAL_PASSWORD` (minimal 12 karakter dan unik) di environment lokal/server, lalu jalankan seed sekali:
 
    ```bash
    npm run seed:capster
