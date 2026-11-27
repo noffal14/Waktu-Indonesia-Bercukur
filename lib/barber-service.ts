@@ -85,9 +85,8 @@ export function hashPasswordDemo(password: string): string {
 }
 
 // Konfigurasi sistem awal: satu akun capster untuk Hasan (di-seed otomatis meski localStorage kosong).
-// Password awal capster: "hasan123" (disimpan dalam bentuk hash, segera ganti lewat menu Profil Capster).
+// Password capster dikelola oleh Firebase Authentication.
 // Catatan produksi: manajemen kredensial capster & sesi WAJIB memakai backend / Firebase Auth.
-const LEGACY_INITIAL_CAPSTER_HASH = hashPasswordDemo('hasan123');
 const SYSTEM_CAPSTERS: Capster[] = [
   {
     id: 'hasan',
@@ -102,27 +101,13 @@ const SYSTEM_CAPSTERS: Capster[] = [
 ];
 
 function mergeSystemCapsters(
-  persistedCapsters: Capster[] | undefined,
+  _persistedCapsters: Capster[] | undefined,
   profile: CapsterProfile
 ): Capster[] {
-  const list = Array.isArray(persistedCapsters) ? persistedCapsters : [];
   return SYSTEM_CAPSTERS.map((sysCapster) => {
-    const existing = list.find(
-      (item) =>
-        item.id === sysCapster.id ||
-        item.username.trim().toLowerCase() ===
-          sysCapster.username.trim().toLowerCase()
-    );
-    const resolvedHash =
-      existing?.passwordHash &&
-      existing.passwordHash !== LEGACY_INITIAL_CAPSTER_HASH
-        ? existing.passwordHash
-        : sysCapster.passwordHash;
-
     const base: Capster = {
       ...sysCapster,
       username: sysCapster.username.trim().toLowerCase(),
-      passwordHash: resolvedHash,
     };
 
     if (base.id === profile.capsterId) {
