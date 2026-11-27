@@ -116,7 +116,17 @@ async function userContext(request: Request) {
     throw new CapsterAuthError(401, 'Sesi login tidak valid atau sudah berakhir.');
   }
   const capster = decoded.role === 'capster';
-  if (capster) await verifyCapsterRequest(request);
+  if (capster) {
+    await verifyCapsterRequest(request);
+  } else {
+    const email = String(decoded.email || '').toLowerCase();
+    const phoneFromEmail = email.match(/^(628\\d{8,12})@pelanggan\\.waktu-indonesia\\.app$/)?.[1];
+    if (!phoneFromEmail) throw new CapsterAuthError(403, 'Akun ini bukan akun pelanggan.');
+    const profile = await getAdminDb().collection('customers').doc(decoded.uid).get();
+    if (!profile.exists || profile.data()?.nomorWhatsApp !== phoneFromEmail) {
+      throw new CapsterAuthError(403, 'Profil pelanggan tidak valid.');
+    }
+  }
   return { uid: decoded.uid, capster, decoded };
 }
 function requiredText(value: unknown) {
