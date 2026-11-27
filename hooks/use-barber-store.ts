@@ -308,7 +308,7 @@ export function useBarberStore() {
       const schedules = Object.fromEntries(cache.schedules.map((row) => [row._id, (() => {
         const { _id, ...data } = row;
         return data;
-      })()]));
+      })()])) as BarberDatabaseState['schedules'];
       const sessionKey = operationalDayKey;
       const quota = cache.quota;
       const quotaMap = quota ? {
