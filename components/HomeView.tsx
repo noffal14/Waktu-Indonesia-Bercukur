@@ -46,6 +46,7 @@ interface HomeViewProps {
   dbState: BarberDatabaseState;
   capsterProfile: CapsterProfile;
   todayStr: string;
+  nowMs: number;
   liveClockText: string;
   shopStatus: ShopOperationalStatus;
   todayQuota: DataKuotaAntrean;
@@ -61,6 +62,7 @@ export function HomeView({
   dbState,
   capsterProfile,
   todayStr,
+  nowMs,
   liveClockText,
   shopStatus,
   todayQuota,
@@ -594,7 +596,9 @@ export function HomeView({
             const { config, slots } = barberService.getComputedSlots(
               dbState,
               capster.id,
-              todayStr
+              todayStr,
+              undefined,
+              nowMs
             );
             const availableCount = slots.filter(
               (s) => s.status === 'Available'
