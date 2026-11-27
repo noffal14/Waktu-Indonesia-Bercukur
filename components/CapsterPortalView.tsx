@@ -21,6 +21,7 @@ import {
   formatDateIndo,
   formatShortDateIndo,
   formatTimeHHMM,
+  formatWhatsAppDisplay,
   parseSlotEpochMs,
 } from '@/lib/barber-service';
 import {
@@ -254,6 +255,17 @@ export function CapsterPortalView({
     return dbState.capsters.find((c) => c.id === id)?.nama || id;
   };
 
+  const getCustomerDisplayName = (
+    customerId?: string,
+    fallback?: string
+  ) => {
+    if (customerId) {
+      const cust = dbState.customers.find((c) => c.id === customerId);
+      if (cust) return cust.nama;
+    }
+    return fallback || 'Tamu Walk-in';
+  };
+
   const openCompletePanel = (
     type: 'walkin' | 'booking',
     id: string,
@@ -425,7 +437,10 @@ export function CapsterPortalView({
                             </span>
                             <div>
                               <p className="font-medium text-sm text-stone-100">
-                                {w.namaPelanggan || 'Tamu Walk-in'}
+                                {getCustomerDisplayName(
+                                  w.customerId,
+                                  w.namaPelanggan
+                                )}
                               </p>
                               <p className="text-xs text-zinc-400 font-mono tabular-nums mt-0.5">
                                 Ambil {formatTimeHHMM(w.waktuAmbil)} WIB
@@ -606,14 +621,14 @@ export function CapsterPortalView({
                               <span>{b.kodeTiket}</span>
                             </div>
                             <p className="font-medium text-sm text-stone-100 mt-1">
-                              {b.nama}{' '}
+                              {getCustomerDisplayName(b.customerId, b.nama)}{' '}
                               <span className="text-xs text-zinc-400 font-normal">
                                 (Capster {getCapsterName(b.capsterId)})
                               </span>
                             </p>
                             <p className="text-xs text-zinc-400 flex items-center gap-1.5 mt-0.5 font-mono tabular-nums">
                               <Phone className="w-3 h-3" />
-                              <span>{b.nomorWhatsApp}</span>
+                              <span>{formatWhatsAppDisplay(b.nomorWhatsApp)}</span>
                             </p>
                             {b.status === 'Booked' && lateMinutes > 0 && (
                               <p className="text-xs text-amber-300 mt-1 font-mono tabular-nums">

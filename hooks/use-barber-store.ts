@@ -11,6 +11,7 @@ import {
 import {
   BarberDatabaseState,
   Capster,
+  Customer,
   DataAntreanWalkin,
   DataBooking,
   QueueEstimationSummary,
@@ -24,6 +25,9 @@ export function useBarberStore() {
   const [hydrated, setHydrated] = useState(false);
   const [browserOnline, setBrowserOnline] = useState(true);
   const [simulateOffline, setSimulateOffline] = useState(false);
+  const [customerSessionId, setCustomerSessionId] = useState<string | null>(
+    null
+  );
   const [activeWalkinId, setActiveWalkinId] = useState<string | null>(null);
   const [activeBookingCode, setActiveBookingCode] = useState<string | null>(
     null
@@ -41,12 +45,12 @@ export function useBarberStore() {
 
   const refreshFromStore = useCallback(() => {
     if (isOfflineRef.current) {
-      // Saat koneksi terputus, pertahankan snapshot terakhir di layar
       return;
     }
     const next = barberService.syncAndGetState();
     setDbState(next);
     setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(next)));
+    setCustomerSessionId(barberService.getCustomerSessionId());
     setActiveWalkinId(barberService.getCustomerWalkinId());
     setActiveBookingCode(barberService.getCustomerBookingCode());
     setLoggedInCapsterId(barberService.getCapsterSession());
@@ -60,6 +64,7 @@ export function useBarberStore() {
       const initial = barberService.syncAndGetState();
       setDbState(initial);
       setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(initial)));
+      setCustomerSessionId(barberService.getCustomerSessionId());
       setActiveWalkinId(barberService.getCustomerWalkinId());
       setActiveBookingCode(barberService.getCustomerBookingCode());
       setLoggedInCapsterId(barberService.getCapsterSession());
@@ -127,28 +132,153 @@ export function useBarberStore() {
     [dbState, todayStr]
   );
 
+  const currentCustomer: Customer | null = useMemo(() => {
+    if (!customerSessionId) return null;
+    return dbState.customers.find((c) => c.id === customerSessionId) || null;
+  }, [dbState.customers, customerSessionId]);
+
   const activeCustomerWalkin: DataAntreanWalkin | null = useMemo(() => {
+    if (currentCustomer) {
+      const custWalkins = dbState.walkinQueue
+        .filter(
+          (w) => w.customerId === currentCustomer.id && w.tanggal === todayStr
+        )
+        .sort((a, b) => b.waktuAmbil - a.waktuAmbil);
+      const active = custWalkins.find(
+        (w) => w.status === 'Waiting' || w.status === 'In-Service'
+      );
+      if (active) return active;
+      if (custWalkins[0]) return custWalkins[0];
+    }
     if (!activeWalkinId) return null;
     return (
       dbState.walkinQueue.find((w) => w.id === activeWalkinId) || null
     );
-  }, [dbState.walkinQueue, activeWalkinId]);
+  }, [dbState.walkinQueue, activeWalkinId, currentCustomer, todayStr]);
 
   const activeCustomerBooking: DataBooking | null = useMemo(() => {
+    if (currentCustomer) {
+      const custBookings = dbState.bookings
+        .filter((b) => b.customerId === currentCustomer.id)
+        .sort((a, b) => b.waktuDibuat - a.waktuDibuat);
+      const active = custBookings.find(
+        (b) => b.status === 'Booked' || b.status === 'In-Service'
+      );
+      if (active) return active;
+      if (custBookings[0]) return custBookings[0];
+    }
     if (!activeBookingCode) return null;
     return (
       dbState.bookings.find((b) => b.kodeTiket === activeBookingCode) || null
     );
-  }, [dbState.bookings, activeBookingCode]);
+  }, [dbState.bookings, activeBookingCode, currentCustomer]);
 
   const loggedInCapster: Capster | null = useMemo(() => {
     if (!loggedInCapsterId) return null;
     return dbState.capsters.find((c) => c.id === loggedInCapsterId) || null;
   }, [dbState.capsters, loggedInCapsterId]);
 
-  // Actions
+  // Customer Auth Actions
+  const registerCustomer = useCallback(
+    (params: {
+      nama: string;
+      nomorWhatsApp: string;
+      email?: string;
+      password: string;
+      capsterFavoritId?: string;
+    }) => {
+      const res = barberService.registerCustomer(params);
+      if (res.ok && res.data) {
+        setDbState(res.data.state);
+        setCustomerSessionId(res.data.customer.id);
+        setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(res.data.state)));
+      }
+      return res;
+    },
+    []
+  );
+
+  const loginCustomer = useCallback(
+    (nomorWhatsApp: string, password: string) => {
+      const res = barberService.loginCustomer(nomorWhatsApp, password);
+      if (res.ok && res.data) {
+        setDbState(res.data.state);
+        setCustomerSessionId(res.data.customer.id);
+        setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(res.data.state)));
+      }
+      return res;
+    },
+    []
+  );
+
+  const loginDemoCustomer = useCallback((customerId: string) => {
+    const res = barberService.loginDemoCustomerById(customerId);
+    if (res.ok && res.data) {
+      setDbState(res.data.state);
+      setCustomerSessionId(res.data.customer.id);
+      setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(res.data.state)));
+    }
+    return res;
+  }, []);
+
+  const logoutCustomer = useCallback(() => {
+    barberService.logoutCustomer();
+    setCustomerSessionId(null);
+  }, []);
+
+  const updateCustomerProfile = useCallback(
+    (params: {
+      nama: string;
+      email?: string;
+      capsterFavoritId?: string;
+      currentPassword?: string;
+      newPassword?: string;
+    }) => {
+      if (!customerSessionId) {
+        return {
+          ok: false,
+          errorCode: 'AUTH_REQUIRED' as const,
+          message: 'Sesi pelanggan tidak aktif.',
+        };
+      }
+      const res = barberService.updateCustomerProfile(
+        customerSessionId,
+        params
+      );
+      if (res.ok && res.data) {
+        setDbState(res.data.state);
+        setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(res.data.state)));
+      }
+      return res;
+    },
+    [customerSessionId]
+  );
+
+  const deleteCustomerAccount = useCallback(() => {
+    if (!customerSessionId) {
+      return {
+        ok: false,
+        errorCode: 'AUTH_REQUIRED' as const,
+        message: 'Sesi pelanggan tidak aktif.',
+      };
+    }
+    const res = barberService.deleteCustomerAccount(customerSessionId);
+    if (res.ok && res.data) {
+      setDbState(res.data);
+      setCustomerSessionId(null);
+      setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(res.data)));
+    }
+    return res;
+  }, [customerSessionId]);
+
+  // Queue & Booking Actions
   const takeWalkinQueue = useCallback(
-    (params: { namaPelanggan?: string; capsterId?: string }) => {
+    (params: {
+      customerId?: string;
+      namaPelanggan?: string;
+      nomorWhatsApp?: string;
+      capsterId?: string;
+    }) => {
       if (isOfflineRef.current) {
         return {
           ok: false,
@@ -157,7 +287,10 @@ export function useBarberStore() {
             'Koneksi terputus. Tidak dapat mengambil nomor antrean baru saat offline.',
         };
       }
-      const res = barberService.takeWalkinQueue(params);
+      const res = barberService.takeWalkinQueue({
+        ...params,
+        customerId: params.customerId || customerSessionId || undefined,
+      });
       if (res.ok && res.data) {
         setDbState(res.data.state);
         setActiveWalkinId(res.data.ticket.id);
@@ -165,11 +298,34 @@ export function useBarberStore() {
       }
       return res;
     },
-    []
+    [customerSessionId]
+  );
+
+  const cancelCustomerWalkin = useCallback(
+    (walkinId: string) => {
+      if (!customerSessionId) {
+        return {
+          ok: false,
+          errorCode: 'AUTH_REQUIRED' as const,
+          message: 'Silakan masuk ke akun terlebih dahulu.',
+        };
+      }
+      const res = barberService.cancelCustomerWalkin(
+        walkinId,
+        customerSessionId
+      );
+      if (res.ok && res.data) {
+        setDbState(res.data);
+        setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(res.data)));
+      }
+      return res;
+    },
+    [customerSessionId]
   );
 
   const createBooking = useCallback(
     (params: {
+      customerId?: string;
       capsterId: string;
       tanggal: string;
       jamSlot: string;
@@ -184,7 +340,10 @@ export function useBarberStore() {
             'Koneksi terputus. Sambungkan internet untuk mengunci slot booking.',
         };
       }
-      const res = barberService.createBooking(params);
+      const res = barberService.createBooking({
+        ...params,
+        customerId: params.customerId || customerSessionId || undefined,
+      });
       if (res.ok && res.data) {
         setDbState(res.data.state);
         setActiveBookingCode(res.data.booking.kodeTiket);
@@ -194,7 +353,65 @@ export function useBarberStore() {
       }
       return res;
     },
-    [refreshFromStore]
+    [refreshFromStore, customerSessionId]
+  );
+
+  const rescheduleBooking = useCallback(
+    (params: {
+      bookingId: string;
+      newCapsterId: string;
+      newTanggal: string;
+      newJamSlot: string;
+    }) => {
+      if (isOfflineRef.current) {
+        return {
+          ok: false,
+          errorCode: 'INVALID_STATE' as const,
+          message: 'Koneksi terputus. Sambungkan internet untuk mengubah jadwal.',
+        };
+      }
+      if (!customerSessionId) {
+        return {
+          ok: false,
+          errorCode: 'AUTH_REQUIRED' as const,
+          message: 'Silakan masuk ke akun terlebih dahulu.',
+        };
+      }
+      const res = barberService.rescheduleBooking({
+        ...params,
+        customerId: customerSessionId,
+      });
+      if (res.ok && res.data) {
+        setDbState(res.data.state);
+        setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(res.data.state)));
+      } else {
+        refreshFromStore();
+      }
+      return res;
+    },
+    [customerSessionId, refreshFromStore]
+  );
+
+  const cancelCustomerBooking = useCallback(
+    (bookingId: string) => {
+      if (!customerSessionId) {
+        return {
+          ok: false,
+          errorCode: 'AUTH_REQUIRED' as const,
+          message: 'Silakan masuk ke akun terlebih dahulu.',
+        };
+      }
+      const res = barberService.cancelCustomerBooking(
+        bookingId,
+        customerSessionId
+      );
+      if (res.ok && res.data) {
+        setDbState(res.data);
+        setLastSyncedFormatted(formatTimeHHMM(getEffectiveNowMs(res.data)));
+      }
+      return res;
+    },
+    [customerSessionId]
   );
 
   const callWalkin = useCallback(
@@ -311,6 +528,7 @@ export function useBarberStore() {
   const resetDemoData = useCallback(() => {
     const seed = barberService.resetDemoData();
     setDbState(seed);
+    setCustomerSessionId(null);
     setActiveWalkinId(null);
     setActiveBookingCode(null);
     setSimulateOffline(false);
@@ -362,6 +580,7 @@ export function useBarberStore() {
     currentClockHHMM,
     todayQuota,
     queueEstimation,
+    currentCustomer,
     activeCustomerWalkin,
     activeCustomerBooking,
     loggedInCapster,
@@ -370,8 +589,17 @@ export function useBarberStore() {
     setSimulateOffline,
     lastSyncedFormatted,
     refreshFromStore,
+    registerCustomer,
+    loginCustomer,
+    loginDemoCustomer,
+    logoutCustomer,
+    updateCustomerProfile,
+    deleteCustomerAccount,
     takeWalkinQueue,
+    cancelCustomerWalkin,
     createBooking,
+    rescheduleBooking,
+    cancelCustomerBooking,
     callWalkin,
     completeWalkin,
     cancelWalkin,

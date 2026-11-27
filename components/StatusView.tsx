@@ -14,6 +14,7 @@ import { formatDateIndo, formatTimeHHMM } from '@/lib/barber-service';
 import {
   AppView,
   BarberDatabaseState,
+  Customer,
   DataAntreanWalkin,
   DataBooking,
   QueueEstimationSummary,
@@ -24,6 +25,7 @@ interface StatusViewProps {
   dbState: BarberDatabaseState;
   todayStr: string;
   queueEstimation: QueueEstimationSummary;
+  currentCustomer: Customer | null;
   activeCustomerWalkin: DataAntreanWalkin | null;
   activeCustomerBooking: DataBooking | null;
   isOffline: boolean;
@@ -37,6 +39,7 @@ export function StatusView({
   dbState,
   todayStr,
   queueEstimation,
+  currentCustomer,
   activeCustomerWalkin,
   activeCustomerBooking,
   isOffline,
@@ -53,10 +56,18 @@ export function StatusView({
     .sort((a, b) => a.waktuAmbil - b.waktuAmbil);
 
   const trackedWalkin =
-    activeCustomerWalkin && activeCustomerWalkin.tanggal === todayStr
+    (currentCustomer
+      ? todayWalkins.find(
+          (w) =>
+            w.customerId === currentCustomer.id &&
+            (w.status === 'Waiting' || w.status === 'In-Service')
+        ) ||
+        todayWalkins.find((w) => w.customerId === currentCustomer.id)
+      : null) ||
+    (activeCustomerWalkin && activeCustomerWalkin.tanggal === todayStr
       ? todayWalkins.find((w) => w.id === activeCustomerWalkin.id) ||
         activeCustomerWalkin
-      : null;
+      : null);
 
   const getCapsterName = (capsterId?: string) => {
     if (!capsterId) return 'Capster tersedia';
@@ -395,13 +406,16 @@ export function StatusView({
                 waitIdx >= 0
                   ? waitIdx * queueEstimation.rataRataDurasiMenit
                   : null;
-              const isMine = trackedWalkin?.id === item.id;
+              const isMine =
+                Boolean(
+                  currentCustomer && item.customerId === currentCustomer.id
+                ) || trackedWalkin?.id === item.id;
 
               return (
                 <div
                   key={item.id}
                   className={`px-5 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-                    isMine ? 'bg-amber-500/5' : ''
+                    isMine ? 'bg-amber-500/10' : ''
                   }`}
                 >
                   <div className="flex items-center gap-4">

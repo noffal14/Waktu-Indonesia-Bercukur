@@ -3,32 +3,48 @@
 import {
   CalendarCheck,
   CalendarDays,
-  Clock,
   Home,
+  ListChecks,
+  LogIn,
+  LogOut,
   Scissors,
   Ticket,
+  User,
   UserCheck,
 } from 'lucide-react';
-import { AppView } from '@/lib/types';
+import { AppView, Customer } from '@/lib/types';
 
 interface TopNavProps {
   currentView: AppView;
   onNavigate: (view: AppView) => void;
   isCapsterLoggedIn: boolean;
+  currentCustomer: Customer | null;
+  onLogoutCustomer: () => void;
 }
 
-const CUSTOMER_NAV_ITEMS: { id: AppView; label: string; mobileLabel: string }[] = [
-  { id: 'beranda', label: 'Beranda', mobileLabel: 'Beranda' },
-  { id: 'antrean', label: 'Ambil Antrean', mobileLabel: 'Antrean' },
-  { id: 'status', label: 'Status Live', mobileLabel: 'Status' },
-  { id: 'jadwal', label: 'Jadwal Capster', mobileLabel: 'Jadwal' },
-  { id: 'booking', label: 'Booking', mobileLabel: 'Booking' },
+const DESKTOP_NAV_ITEMS: { id: AppView; label: string }[] = [
+  { id: 'beranda', label: 'Beranda' },
+  { id: 'antrean', label: 'Antrean' },
+  { id: 'status', label: 'Status' },
+  { id: 'jadwal', label: 'Jadwal' },
+  { id: 'booking', label: 'Booking' },
+  { id: 'antrean-saya', label: 'Antrean Saya' },
+];
+
+const MOBILE_BOTTOM_ITEMS: { id: AppView; label: string }[] = [
+  { id: 'beranda', label: 'Beranda' },
+  { id: 'antrean', label: 'Antrean' },
+  { id: 'antrean-saya', label: 'Saya' },
+  { id: 'jadwal', label: 'Jadwal' },
+  { id: 'booking', label: 'Booking' },
 ];
 
 export function TopNav({
   currentView,
   onNavigate,
   isCapsterLoggedIn,
+  currentCustomer,
+  onLogoutCustomer,
 }: TopNavProps) {
   const renderMobileIcon = (id: AppView, active: boolean) => {
     const cls = `w-5 h-5 ${active ? 'text-amber-400' : 'text-zinc-400'}`;
@@ -37,8 +53,8 @@ export function TopNav({
         return <Home className={cls} />;
       case 'antrean':
         return <Ticket className={cls} />;
-      case 'status':
-        return <Clock className={cls} />;
+      case 'antrean-saya':
+        return <ListChecks className={cls} />;
       case 'jadwal':
         return <CalendarDays className={cls} />;
       case 'booking':
@@ -50,24 +66,24 @@ export function TopNav({
 
   return (
     <>
-      {/* Desktop & Mobile Top Header (3-zone contract on desktop, compact 48px on mobile) */}
+      {/* Desktop & Mobile Top Header */}
       <header className="sticky top-0 z-30 h-12 md:h-16 bg-[#0B0B0D]/90 backdrop-blur-md border-b border-zinc-800/80">
-        <div className="max-w-6xl mx-auto h-full px-4 md:px-6 flex items-center justify-between gap-8">
-          {/* Zone 1: Brand Title (single text element) */}
+        <div className="max-w-6xl mx-auto h-full px-3 sm:px-4 md:px-6 flex items-center justify-between gap-4 lg:gap-8">
+          {/* Zone 1: Brand Title */}
           <button
             type="button"
             onClick={() => onNavigate('beranda')}
-            className="font-display text-base md:text-lg font-bold tracking-tight text-stone-100 hover:text-amber-400 transition-colors whitespace-nowrap shrink-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 rounded-md"
+            className="font-display text-sm sm:text-base md:text-lg font-bold tracking-tight text-stone-100 hover:text-amber-400 transition-colors whitespace-nowrap shrink-0 text-left truncate max-w-[165px] sm:max-w-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 rounded-md"
           >
             Waktu Indonesia Bercukur
           </button>
 
-          {/* Zone 2: 5 concise single-line nav links (Desktop) */}
+          {/* Zone 2: Desktop Navigation Links */}
           <nav
             aria-label="Navigasi utama"
-            className="hidden md:flex items-center gap-6 text-sm font-medium"
+            className="hidden lg:flex items-center gap-5 text-sm font-medium"
           >
-            {CUSTOMER_NAV_ITEMS.map((item) => {
+            {DESKTOP_NAV_ITEMS.map((item) => {
               const active = currentView === item.id;
               return (
                 <button
@@ -86,20 +102,64 @@ export function TopNav({
             })}
           </nav>
 
-          {/* Zone 3: Single Primary Action (Capster Portal / Dashboard) */}
-          <div className="flex items-center shrink-0">
+          {/* Zone 3: Customer Auth + Capster Portal */}
+          <div className="flex items-center gap-2 shrink-0">
+            {currentCustomer ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onNavigate('profil')}
+                  title="Profil Pelanggan"
+                  className={`inline-flex items-center gap-1.5 px-2.5 md:px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 min-h-[34px] md:min-h-[38px] transition-colors ${
+                    currentView === 'profil'
+                      ? 'bg-amber-400 text-zinc-950 font-semibold'
+                      : 'bg-zinc-900 hover:bg-zinc-800 text-stone-100 border border-zinc-700'
+                  }`}
+                >
+                  <User className="w-3.5 h-3.5 shrink-0" />
+                  <span className="max-w-[76px] sm:max-w-[120px] truncate">
+                    {currentCustomer.nama.split(' ')[0]}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={onLogoutCustomer}
+                  title="Keluar dari akun pelanggan"
+                  className="inline-flex items-center gap-1.5 px-2.5 md:px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-rose-950/50 border border-zinc-700 hover:border-rose-500/40 text-zinc-300 hover:text-rose-200 text-xs font-medium whitespace-nowrap shrink-0 min-h-[34px] md:min-h-[38px] transition-colors"
+                >
+                  <LogOut className="w-3.5 h-3.5 shrink-0" />
+                  <span className="hidden sm:inline">Keluar</span>
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onNavigate('auth')}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs md:text-sm font-semibold whitespace-nowrap shrink-0 min-h-[34px] md:min-h-[38px] transition-colors ${
+                  currentView === 'auth'
+                    ? 'bg-amber-400 text-zinc-950'
+                    : 'bg-amber-400 hover:bg-amber-300 text-zinc-950'
+                }`}
+              >
+                <LogIn className="w-3.5 h-3.5 shrink-0" />
+                <span>Masuk / Daftar</span>
+              </button>
+            )}
+
             <button
               type="button"
               onClick={() => onNavigate('capster')}
-              className={`inline-flex items-center gap-2 px-3.5 py-1.5 md:px-4 md:py-2 rounded-lg text-xs md:text-sm font-semibold transition-colors whitespace-nowrap shrink-0 min-h-[36px] md:min-h-[40px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${
+              title="Portal Khusus Capster"
+              className={`inline-flex items-center gap-1.5 px-2.5 md:px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 min-h-[34px] md:min-h-[38px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${
                 currentView === 'capster'
                   ? 'bg-amber-400 text-zinc-950'
                   : 'bg-zinc-900 text-amber-300 border border-amber-500/35 hover:bg-amber-500/15'
               }`}
             >
-              <UserCheck className="w-4 h-4 shrink-0" />
-              <span>
-                {isCapsterLoggedIn ? 'Dashboard Capster' : 'Portal Capster'}
+              <UserCheck className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden sm:inline">
+                {isCapsterLoggedIn ? 'Dashboard Capster' : 'Capster'}
               </span>
             </button>
           </div>
@@ -109,10 +169,10 @@ export function TopNav({
       {/* Mobile Bottom Thumb-Zone Navigation Bar (<= 60px high) */}
       <nav
         aria-label="Menu bawah ponsel"
-        className="md:hidden fixed bottom-0 left-0 right-0 z-40 h-[60px] bg-[#0F0F13]/95 backdrop-blur-md border-t border-zinc-800/90"
+        className="lg:hidden fixed bottom-0 left-0 right-0 z-40 h-[60px] bg-[#0F0F13]/95 backdrop-blur-md border-t border-zinc-800/90"
       >
         <div className="grid grid-cols-5 h-full max-w-lg mx-auto">
-          {CUSTOMER_NAV_ITEMS.map((item) => {
+          {MOBILE_BOTTOM_ITEMS.map((item) => {
             const active = currentView === item.id;
             return (
               <button
@@ -127,7 +187,7 @@ export function TopNav({
                     active ? 'text-amber-400' : 'text-zinc-400'
                   }`}
                 >
-                  {item.mobileLabel}
+                  {item.label}
                 </span>
               </button>
             );

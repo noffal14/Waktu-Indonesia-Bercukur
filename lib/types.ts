@@ -10,7 +10,10 @@ export type AppView =
   | 'status'
   | 'jadwal'
   | 'booking'
-  | 'capster';
+  | 'capster'
+  | 'auth'
+  | 'antrean-saya'
+  | 'profil';
 
 export interface Capster {
   id: string;
@@ -23,12 +26,27 @@ export interface Capster {
   fotoKey: 'hasan' | 'raka' | 'dimas';
 }
 
+// D5 DataAkunPelanggan
+export interface Customer {
+  id: string;
+  nama: string;
+  nomorWhatsApp: string; // Dinormalisasi ke format 628xx
+  email?: string;
+  passwordHash: string;
+  capsterFavoritId?: string;
+  dibuatPada: number; // Epoch ms
+}
+
+export type DataAkunPelanggan = Customer;
+
 // D1 DataAntreanWalkin
 export interface DataAntreanWalkin {
   id: string;
   nomorAntrean: string; // Format: A001, A002, dst (reset tiap hari)
   tanggal: string; // YYYY-MM-DD
+  customerId?: string; // Relasi opsional ke Customer (kompatibel dengan data lama)
   namaPelanggan?: string;
+  nomorWhatsApp?: string;
   waktuAmbil: number; // Epoch ms (urutan FIFO murni)
   status: QueueStatus;
   capsterId?: string;
@@ -73,6 +91,7 @@ export interface ComputedSlotInfo {
 export interface DataBooking {
   id: string;
   kodeTiket: string; // Format: BK-YYYYMMDD-001
+  customerId?: string; // Relasi opsional ke Customer (kompatibel dengan data lama)
   nama: string;
   nomorWhatsApp: string;
   capsterId: string;
@@ -93,6 +112,7 @@ export interface BarberDatabaseState {
   extraOffsetMinutes: number; // Tambahan simulasi waktu berjalan (+15m, +30m, dst)
   useRealClock: boolean;
   capsters: Capster[];
+  customers: DataAkunPelanggan[]; // D5 DataAkunPelanggan
   walkinQueue: DataAntreanWalkin[];
   quotas: Record<string, DataKuotaAntrean>; // key: YYYY-MM-DD
   schedules: Record<string, DataJadwalSlotCapster>; // key: `${capsterId}_${tanggal}`
@@ -110,7 +130,11 @@ export interface ServiceResult<T = void> {
     | 'CAPSTER_OFF'
     | 'VALIDATION_ERROR'
     | 'NOT_FOUND'
-    | 'INVALID_STATE';
+    | 'INVALID_STATE'
+    | 'DUPLICATE_WALKIN'
+    | 'SCHEDULE_CONFLICT'
+    | 'RESCHEDULE_TOO_LATE'
+    | 'AUTH_REQUIRED';
   message?: string;
 }
 

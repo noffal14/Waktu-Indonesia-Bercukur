@@ -17,11 +17,12 @@ import {
   formatDateIndo,
   formatShortDateIndo,
   formatTimeHHMM,
-  validateIndonesianWhatsApp,
+  formatWhatsAppDisplay,
 } from '@/lib/barber-service';
 import {
   AppView,
   BarberDatabaseState,
+  Customer,
   DataBooking,
   ServiceResult,
 } from '@/lib/types';
@@ -31,6 +32,7 @@ import { StatusIndicator } from './StatusIndicator';
 interface BookingViewProps {
   dbState: BarberDatabaseState;
   todayStr: string;
+  currentCustomer: Customer;
   preselectedBooking?: {
     capsterId?: string;
     tanggal?: string;
@@ -39,6 +41,7 @@ interface BookingViewProps {
   activeCustomerBooking: DataBooking | null;
   isOffline: boolean;
   onCreateBooking: (params: {
+    customerId?: string;
     capsterId: string;
     tanggal: string;
     jamSlot: string;
@@ -55,6 +58,7 @@ interface BookingViewProps {
 export function BookingView({
   dbState,
   todayStr,
+  currentCustomer,
   preselectedBooking,
   activeCustomerBooking,
   isOffline,
@@ -65,7 +69,10 @@ export function BookingView({
   const [tab, setTab] = useState<'buat' | 'cek'>('buat');
 
   const [capsterId, setCapsterId] = useState<string>(
-    preselectedBooking?.capsterId || dbState.capsters[0]?.id || 'hasan'
+    preselectedBooking?.capsterId ||
+      currentCustomer.capsterFavoritId ||
+      dbState.capsters[0]?.id ||
+      'hasan'
   );
   const [tanggal, setTanggal] = useState<string>(
     preselectedBooking?.tanggal || todayStr
@@ -73,8 +80,6 @@ export function BookingView({
   const [jamSlot, setJamSlot] = useState<string>(
     preselectedBooking?.jamSlot || ''
   );
-  const [nama, setNama] = useState<string>('');
-  const [nomorWhatsApp, setNomorWhatsApp] = useState<string>('');
   const [formError, setFormError] = useState<string | null>(null);
   const [issuedBooking, setIssuedBooking] = useState<DataBooking | null>(null);
 
@@ -103,25 +108,19 @@ export function BookingView({
     setFormError(null);
 
     if (!jamSlot) {
-      setFormError('Pilih salah satu slot jam yang tersedia (hijau) terlebih dahulu.');
-      return;
-    }
-    if (nama.trim().length < 2) {
-      setFormError('Nama lengkap wajib diisi (minimal 2 karakter).');
-      return;
-    }
-    const waValidation = validateIndonesianWhatsApp(nomorWhatsApp);
-    if (!waValidation.valid) {
-      setFormError(waValidation.error || 'Nomor WhatsApp tidak valid.');
+      setFormError(
+        'Pilih salah satu slot jam yang tersedia (hijau) terlebih dahulu.'
+      );
       return;
     }
 
     const res = onCreateBooking({
+      customerId: currentCustomer.id,
       capsterId,
       tanggal,
       jamSlot,
-      nama,
-      nomorWhatsApp,
+      nama: currentCustomer.nama,
+      nomorWhatsApp: currentCustomer.nomorWhatsApp,
     });
 
     if (!res.ok || !res.data) {
@@ -136,8 +135,6 @@ export function BookingView({
 
     setIssuedBooking(res.data.booking);
     setCheckedTicket(res.data.booking);
-    setNama('');
-    setNomorWhatsApp('');
     setJamSlot('');
   };
 
@@ -190,7 +187,6 @@ export function BookingView({
         <StatusIndicator status={ticket.status} />
       </div>
 
-      {/* Notifikasi Pembatalan Otomatis / Manual */}
       {ticket.status === 'Canceled' && (
         <div className="p-4 rounded-xl bg-rose-950/40 border border-rose-500/40 flex items-start gap-3">
           <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
@@ -199,12 +195,12 @@ export function BookingView({
               Booking Dibatalkan{' '}
               {ticket.alasanBatal === 'otomatis'
                 ? 'Otomatis oleh Sistem'
-                : 'oleh Capster'}
+                : 'oleh Capster / Pelanggan'}
             </p>
             <p className="text-xs text-rose-100/80 leading-relaxed">
               {ticket.alasanBatal === 'otomatis'
                 ? `Pelanggan tidak hadir melewati batas toleransi keterlambatan 15 menit dari jadwal pukul ${ticket.jamSlot} WIB. Slot telah dibuka kembali untuk antrean walk-in.`
-                : 'Booking ini dibatalkan karena keterlambatan melebihi toleransi 15 menit. Silakan buat booking baru jika masih ingin bercukur.'}
+                : 'Booking ini dibatalkan. Silakan buat booking baru jika masih ingin bercukur.'}
             </p>
           </div>
         </div>
@@ -218,7 +214,7 @@ export function BookingView({
         <div className="p-3.5 rounded-xl bg-zinc-900/70 border border-zinc-800">
           <p className="text-xs text-zinc-400">Nomor WhatsApp</p>
           <p className="font-mono tabular-nums font-semibold text-stone-100 mt-1">
-            {ticket.nomorWhatsApp}
+            {formatWhatsAppDisplay(ticket.nomorWhatsApp)}
           </p>
         </div>
         <div className="p-3.5 rounded-xl bg-zinc-900/70 border border-zinc-800">
@@ -235,7 +231,6 @@ export function BookingView({
         </div>
       </div>
 
-      {/* Aturan Toleransi Keterlambatan di Tiket */}
       <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-3 text-xs text-amber-100/90 leading-relaxed">
         <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
         <div>
@@ -266,12 +261,11 @@ export function BookingView({
             Booking Layanan Capster
           </h1>
           <p className="text-sm text-zinc-400">
-            Kunci slot cukur Anda tanpa perlu antre di lokasi, atau cek status
-            tiket booking yang sudah dibuat.
+            Kunci slot cukur Anda tanpa mengetik ulang data diri, atau cek
+            status tiket booking.
           </p>
         </div>
 
-        {/* Segmented Tab Switch */}
         <div className="inline-flex p-1 rounded-xl bg-[#131317] border border-zinc-800 self-start">
           <button
             type="button"
@@ -298,7 +292,6 @@ export function BookingView({
         </div>
       </div>
 
-      {/* TAB 1: BUAT BOOKING */}
       {tab === 'buat' && (
         <>
           {liveIssuedBooking ? (
@@ -306,8 +299,8 @@ export function BookingView({
               <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/35 flex items-center gap-3 text-sm text-emerald-200">
                 <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
                 <span>
-                  Slot berhasil dikunci! Simpan atau catat kode tiket booking
-                  Anda di bawah ini.
+                  Slot berhasil dikunci! Anda juga dapat mengelola atau mengubah
+                  jadwal dari halaman Antrean &amp; Jadwal Saya.
                 </span>
               </div>
 
@@ -316,17 +309,17 @@ export function BookingView({
               <div className="flex flex-col sm:flex-row gap-3">
                 <button
                   type="button"
+                  onClick={() => onNavigate('antrean-saya')}
+                  className="min-h-[48px] px-5 py-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 text-sm font-semibold"
+                >
+                  Lihat di Antrean &amp; Jadwal Saya
+                </button>
+                <button
+                  type="button"
                   onClick={() => setIssuedBooking(null)}
                   className="min-h-[48px] px-5 py-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-stone-100 border border-zinc-700 text-sm font-medium"
                 >
                   Buat Booking Lainnya
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onNavigate('jadwal')}
-                  className="min-h-[48px] px-5 py-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-stone-100 border border-zinc-700 text-sm font-medium"
-                >
-                  Lihat Kalender Jadwal Capster
                 </button>
               </div>
             </div>
@@ -380,7 +373,6 @@ export function BookingView({
                   })}
                 </div>
 
-                {/* Tanggal */}
                 <div className="flex gap-2 overflow-x-auto pb-1">
                   {dateOptions.map((dt, idx) => {
                     const active = dt === tanggal;
@@ -408,7 +400,6 @@ export function BookingView({
                   })}
                 </div>
 
-                {/* Slot Grid */}
                 {config.isLibur ? (
                   <div className="p-6 rounded-xl bg-zinc-900/80 border border-rose-500/35 text-center space-y-2">
                     <CalendarOff className="w-8 h-8 text-rose-400 mx-auto" />
@@ -465,11 +456,20 @@ export function BookingView({
                 )}
               </div>
 
-              {/* Step 2: Data Pelanggan & Konfirmasi */}
+              {/* Step 2: Identitas Otomatis dari Akun (Read-only) & Konfirmasi */}
               <div className="p-5 sm:p-6 rounded-2xl bg-[#131317] border border-zinc-800/90 space-y-5">
-                <h2 className="font-display text-lg font-semibold text-stone-100">
-                  2. Data Pelanggan & Konfirmasi
-                </h2>
+                <div className="flex items-center justify-between gap-3">
+                  <h2 className="font-display text-lg font-semibold text-stone-100">
+                    2. Data Pelanggan &amp; Konfirmasi
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate('profil')}
+                    className="text-xs font-medium text-amber-400 hover:text-amber-300"
+                  >
+                    ubah di profil
+                  </button>
+                </div>
 
                 {formError && (
                   <div className="p-4 rounded-xl bg-rose-950/50 border border-rose-500/45 text-sm text-rose-200 flex items-start gap-2.5">
@@ -484,16 +484,14 @@ export function BookingView({
                       htmlFor="booking-nama"
                       className="block text-sm font-medium text-stone-200 mb-1.5"
                     >
-                      Nama Lengkap <span className="text-rose-400">*</span>
+                      Nama Lengkap
                     </label>
                     <input
                       id="booking-nama"
                       type="text"
-                      required
-                      value={nama}
-                      onChange={(e) => setNama(e.target.value)}
-                      placeholder="Contoh: Ahmad Fauzan"
-                      className="w-full min-h-[48px] px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-stone-100 placeholder:text-zinc-500 text-sm focus:outline-none focus:border-amber-400"
+                      readOnly
+                      value={currentCustomer.nama}
+                      className="w-full min-h-[48px] px-4 py-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800 text-zinc-200 text-sm cursor-not-allowed"
                     />
                   </div>
 
@@ -502,21 +500,18 @@ export function BookingView({
                       htmlFor="booking-wa"
                       className="block text-sm font-medium text-stone-200 mb-1.5"
                     >
-                      Nomor WhatsApp <span className="text-rose-400">*</span>
+                      Nomor WhatsApp
                     </label>
                     <input
                       id="booking-wa"
                       type="tel"
-                      required
-                      value={nomorWhatsApp}
-                      onChange={(e) => setNomorWhatsApp(e.target.value)}
-                      placeholder="Contoh: 081234567890"
-                      className="w-full min-h-[48px] px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-stone-100 placeholder:text-zinc-500 text-sm font-mono focus:outline-none focus:border-amber-400"
+                      readOnly
+                      value={formatWhatsAppDisplay(currentCustomer.nomorWhatsApp)}
+                      className="w-full min-h-[48px] px-4 py-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800 text-zinc-200 text-sm font-mono cursor-not-allowed"
                     />
                   </div>
                 </div>
 
-                {/* Aturan Toleransi Keterlambatan di Halaman Konfirmasi */}
                 <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/35 flex items-start gap-3">
                   <Clock className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
                   <div className="text-xs sm:text-sm text-amber-100/90 space-y-1">
@@ -549,7 +544,6 @@ export function BookingView({
         </>
       )}
 
-      {/* TAB 2: CEK TIKET BOOKING */}
       {tab === 'cek' && (
         <div className="space-y-6">
           <div className="p-5 sm:p-6 rounded-2xl bg-[#131317] border border-zinc-800/90 space-y-4">
@@ -580,7 +574,6 @@ export function BookingView({
               </button>
             </form>
 
-            {/* Pintasan Kode Tiket Demo agar mudah diuji */}
             {(sampleBookedTicket || sampleCanceledTicket) && (
               <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-400 pt-1">
                 <span>Contoh kode demo:</span>

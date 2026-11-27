@@ -8,16 +8,19 @@ import {
   CheckCircle2,
   Clock,
   Ticket,
+  User,
   Users,
 } from 'lucide-react';
 import {
   addDaysYYYYMMDD,
   formatDateIndo,
   formatTimeHHMM,
+  formatWhatsAppDisplay,
 } from '@/lib/barber-service';
 import {
   AppView,
   BarberDatabaseState,
+  Customer,
   DataAntreanWalkin,
   DataKuotaAntrean,
   QueueEstimationSummary,
@@ -30,10 +33,13 @@ interface WalkinViewProps {
   todayStr: string;
   todayQuota: DataKuotaAntrean;
   queueEstimation: QueueEstimationSummary;
+  currentCustomer: Customer;
   activeCustomerWalkin: DataAntreanWalkin | null;
   isOffline: boolean;
   onTakeWalkin: (params: {
+    customerId?: string;
     namaPelanggan?: string;
+    nomorWhatsApp?: string;
     capsterId?: string;
   }) => ServiceResult<{
     ticket: DataAntreanWalkin;
@@ -50,17 +56,18 @@ export function WalkinView({
   todayStr,
   todayQuota,
   queueEstimation,
+  currentCustomer,
   activeCustomerWalkin,
   isOffline,
   onTakeWalkin,
   onNavigate,
   onBookTomorrow,
 }: WalkinViewProps) {
-  const [namaPelanggan, setNamaPelanggan] = useState('');
-  const [capsterId, setCapsterId] = useState('');
+  const [capsterId, setCapsterId] = useState(
+    currentCustomer.capsterFavoritId || ''
+  );
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [justIssued, setJustIssued] = useState<DataAntreanWalkin | null>(null);
-  const [showNewForm, setShowNewForm] = useState(false);
 
   const sisaKuota = Math.max(
     0,
@@ -69,11 +76,23 @@ export function WalkinView({
   const isQuotaFull = sisaKuota <= 0;
   const tomorrowStr = addDaysYYYYMMDD(todayStr, 1);
 
+  // Cek apakah pelanggan sudah punya walk-in aktif hari ini (Waiting / In-Service)
+  const existingActiveWalkin =
+    dbState.walkinQueue.find(
+      (w) =>
+        w.tanggal === todayStr &&
+        w.customerId === currentCustomer.id &&
+        (w.status === 'Waiting' || w.status === 'In-Service')
+    ) || null;
+
   const displayedTicket =
     justIssued ||
-    (!showNewForm &&
-    activeCustomerWalkin &&
-    activeCustomerWalkin.tanggal === todayStr
+    existingActiveWalkin ||
+    (activeCustomerWalkin &&
+    activeCustomerWalkin.tanggal === todayStr &&
+    activeCustomerWalkin.customerId === currentCustomer.id &&
+    (activeCustomerWalkin.status === 'Waiting' ||
+      activeCustomerWalkin.status === 'In-Service')
       ? activeCustomerWalkin
       : null);
 
@@ -81,7 +100,9 @@ export function WalkinView({
     e.preventDefault();
     setErrorMsg(null);
     const res = onTakeWalkin({
-      namaPelanggan: namaPelanggan.trim() || undefined,
+      customerId: currentCustomer.id,
+      namaPelanggan: currentCustomer.nama,
+      nomorWhatsApp: currentCustomer.nomorWhatsApp,
       capsterId: capsterId || undefined,
     });
     if (!res.ok || !res.data) {
@@ -91,11 +112,8 @@ export function WalkinView({
       return;
     }
     setJustIssued(res.data.ticket);
-    setShowNewForm(false);
-    setNamaPelanggan('');
   };
 
-  // Hitung posisi live untuk tiket yang sedang ditampilkan
   const liveTicket = displayedTicket
     ? dbState.walkinQueue.find((w) => w.id === displayedTicket.id) ||
       displayedTicket
@@ -118,8 +136,8 @@ export function WalkinView({
           Ambil Nomor Antrean Walk-in
         </h1>
         <p className="text-sm text-zinc-400">
-          {formatDateIndo(todayStr)} · Nomor antrean direset otomatis setiap
-          hari dan dipanggil sesuai urutan kedatangan.
+          {formatDateIndo(todayStr)} · Identitas diisi otomatis dari akun Anda.
+          Maksimal 1 antrean aktif per hari.
         </p>
       </div>
 
@@ -149,7 +167,7 @@ export function WalkinView({
         </div>
       </div>
 
-      {/* Kondisi Kuota Penuh (Alternative Flow UC-01) */}
+      {/* Kondisi Kuota Penuh */}
       {isQuotaFull && !liveTicket && (
         <div className="p-6 sm:p-8 rounded-2xl bg-rose-950/30 border border-rose-500/40 space-y-5">
           <div className="flex items-start gap-3.5">
@@ -187,7 +205,7 @@ export function WalkinView({
         </div>
       )}
 
-      {/* Halaman Tiket Antrean Walk-in yang Sudah Terbit */}
+      {/* Tiket Antrean Walk-in Aktif */}
       {liveTicket && (
         <div className="rounded-2xl bg-[#131317] border border-amber-500/40 overflow-hidden">
           <div className="p-6 sm:p-8 space-y-6">
@@ -195,7 +213,7 @@ export function WalkinView({
               <div className="flex items-center gap-2.5">
                 <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
                 <span className="text-sm font-semibold text-stone-100">
-                  Tiket Antrean Walk-in Resmi
+                  Tiket Antrean Walk-in Aktif Anda
                 </span>
               </div>
               <StatusIndicator status={liveTicket.status} />
@@ -219,7 +237,7 @@ export function WalkinView({
                 <div className="flex items-center justify-between py-2 border-b border-zinc-800/80">
                   <span className="text-zinc-400">Nama Pelanggan</span>
                   <span className="font-medium text-stone-100">
-                    {liveTicket.namaPelanggan || 'Tamu Walk-in'}
+                    {liveTicket.namaPelanggan || currentCustomer.nama}
                   </span>
                 </div>
                 <div className="flex items-center justify-between py-2 border-b border-zinc-800/80">
@@ -248,58 +266,62 @@ export function WalkinView({
             <div className="p-4 rounded-xl bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-300 flex items-start gap-2.5">
               <Clock className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
               <span>
-                Anda tidak perlu berdiri menumpuk di depan barbershop. Pantau
-                nomor yang sedang dipanggil langsung dari halaman Status Live.
+                Anda sudah memiliki antrean aktif hari ini. Pantau perubahan
+                posisi dan estimasi langsung dari halaman Antrean Saya atau
+                Status Live.
               </span>
             </div>
 
             <div className="flex flex-col sm:flex-row gap-3">
               <button
                 type="button"
-                onClick={() => onNavigate('status')}
+                onClick={() => onNavigate('antrean-saya')}
                 className="flex-1 min-h-[48px] px-5 py-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 font-semibold text-sm flex items-center justify-center gap-2 transition-colors"
               >
-                <span>Pantau Status & Estimasi Live</span>
+                <span>Buka Antrean & Jadwal Saya</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
 
-              {!isQuotaFull && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setJustIssued(null);
-                    setShowNewForm(true);
-                  }}
-                  className="min-h-[48px] px-5 py-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-stone-200 border border-zinc-700 font-medium text-sm flex items-center justify-center gap-2 transition-colors"
-                >
-                  <Ticket className="w-4 h-4" />
-                  <span>Ambil Nomor Lain</span>
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => onNavigate('status')}
+                className="min-h-[48px] px-5 py-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-stone-200 border border-zinc-700 font-medium text-sm flex items-center justify-center gap-2 transition-colors"
+              >
+                <span>Papan Status Live</span>
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Form Pengambilan Antrean (Alur <= 3 langkah) */}
+      {/* Form Pengambilan Antrean tanpa input identitas manual */}
       {!isQuotaFull && !liveTicket && (
         <form
           onSubmit={handleSubmit}
           className="p-6 sm:p-8 rounded-2xl bg-[#131317] border border-zinc-800/90 space-y-5"
         >
-          <div className="space-y-1">
-            <h2 className="font-display text-lg font-semibold text-stone-100">
-              Data Ringkas Walk-in
-            </h2>
-            <p className="text-xs sm:text-sm text-zinc-400">
-              Tanpa perlu daftar akun. Cukup isi nama panggilan (opsional) dan
-              ambil nomor.
-            </p>
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <h2 className="font-display text-lg font-semibold text-stone-100">
+                Konfirmasi Antrean Walk-in
+              </h2>
+              <p className="text-xs sm:text-sm text-zinc-400">
+                Identitas Anda diambil otomatis dari akun pelanggan yang sedang
+                masuk.
+              </p>
+            </div>
           </div>
 
           {errorMsg && (
-            <div className="p-3.5 rounded-xl bg-rose-950/50 border border-rose-500/40 text-sm text-rose-200">
-              {errorMsg}
+            <div className="p-3.5 rounded-xl bg-rose-950/50 border border-rose-500/40 text-sm text-rose-200 space-y-2">
+              <p>{errorMsg}</p>
+              <button
+                type="button"
+                onClick={() => onNavigate('antrean-saya')}
+                className="text-xs font-semibold text-amber-300 hover:text-amber-200"
+              >
+                Lihat Antrean & Jadwal Saya →
+              </button>
             </div>
           )}
 
@@ -310,48 +332,51 @@ export function WalkinView({
             </div>
           )}
 
-          <div className="space-y-4">
-            <div>
-              <label
-                htmlFor="walkin-nama"
-                className="block text-sm font-medium text-stone-200 mb-1.5"
-              >
-                Nama Panggilan{' '}
-                <span className="text-zinc-400 font-normal">(opsional)</span>
-              </label>
-              <input
-                id="walkin-nama"
-                type="text"
-                value={namaPelanggan}
-                onChange={(e) => setNamaPelanggan(e.target.value)}
-                placeholder="Contoh: Andi"
-                maxLength={50}
-                className="w-full min-h-[48px] px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-stone-100 placeholder:text-zinc-500 text-sm focus:outline-none focus:border-amber-400"
-              />
+          {/* Ringkasan Identitas Akun (Read-only) */}
+          <div className="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center shrink-0">
+                <User className="w-5 h-5 text-amber-400" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-stone-100">
+                  {currentCustomer.nama}
+                </p>
+                <p className="text-xs font-mono tabular-nums text-zinc-400">
+                  WhatsApp: {formatWhatsAppDisplay(currentCustomer.nomorWhatsApp)}
+                </p>
+              </div>
             </div>
+            <button
+              type="button"
+              onClick={() => onNavigate('profil')}
+              className="text-xs font-medium text-amber-400 hover:text-amber-300 self-start sm:self-auto"
+            >
+              Ubah di profil
+            </button>
+          </div>
 
-            <div>
-              <label
-                htmlFor="walkin-capster"
-                className="block text-sm font-medium text-stone-200 mb-1.5"
-              >
-                Preferensi Capster{' '}
-                <span className="text-zinc-400 font-normal">(opsional)</span>
-              </label>
-              <select
-                id="walkin-capster"
-                value={capsterId}
-                onChange={(e) => setCapsterId(e.target.value)}
-                className="w-full min-h-[48px] px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-stone-100 text-sm focus:outline-none focus:border-amber-400"
-              >
-                <option value="">Siapa saja yang kosong lebih dulu</option>
-                {dbState.capsters.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.nama} ({c.gelar})
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div>
+            <label
+              htmlFor="walkin-capster"
+              className="block text-sm font-medium text-stone-200 mb-1.5"
+            >
+              Preferensi Capster{' '}
+              <span className="text-zinc-400 font-normal">(opsional)</span>
+            </label>
+            <select
+              id="walkin-capster"
+              value={capsterId}
+              onChange={(e) => setCapsterId(e.target.value)}
+              className="w-full min-h-[48px] px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-stone-100 text-sm focus:outline-none focus:border-amber-400"
+            >
+              <option value="">Siapa saja yang kosong lebih dulu</option>
+              {dbState.capsters.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.nama} ({c.gelar})
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="p-4 rounded-xl bg-zinc-900/70 border border-zinc-800 flex items-center justify-between gap-4 text-xs sm:text-sm">
