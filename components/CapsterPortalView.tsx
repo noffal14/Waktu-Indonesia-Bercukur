@@ -87,12 +87,14 @@ interface CapsterPortalViewProps {
   onCompleteWalkin: (
     walkinId: string,
     overrideDurationMinutes?: number
+    selectedServices?: SelectedServiceInput[]
   ) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onCancelWalkin: (walkinId: string) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onStartBooking: (bookingId: string) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onCompleteBooking: (
     bookingId: string,
-    overrideDurationMinutes?: number
+    overrideDurationMinutes?: number,
+    finalTotal?: number
   ) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onCancelBookingManual: (
     bookingId: string
@@ -1004,19 +1006,6 @@ export function CapsterPortalView({
                               </div>
                             </div>
                           )}
-                          {completingItem.type === 'booking' && (
-                            <div className="space-y-1.5">
-                              <label className="block text-xs font-medium text-stone-200">Harga akhir setelah konfirmasi capster (Rp):</label>
-                              <input
-                                type="number"
-                                min={0}
-                                max={dbState.bookings.find((item) => item.id === b.id)?.subtotalHarga || 0}
-                                value={completingItem.finalTotal ?? 0}
-                                onChange={(event) => setCompletingItem({ ...completingItem, finalTotal: Math.max(0, Number(event.target.value) || 0) })}
-                                className="w-full max-w-xs min-h-[40px] rounded-lg border border-zinc-700 bg-zinc-950 px-3 text-sm font-mono text-stone-100"
-                              />
-                            </div>
-                          )}
                           <div className="flex gap-2">
                             <button
                               type="button"
@@ -1249,6 +1238,17 @@ export function CapsterPortalView({
                                 })
                               }
                               className="w-20 min-h-[38px] px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-700 text-xs font-mono text-stone-100"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <label className="block text-xs font-medium text-stone-200">Harga akhir setelah konfirmasi capster (Rp):</label>
+                            <input
+                              type="number"
+                              min={0}
+                              max={b.subtotalHarga || 0}
+                              value={completingItem.finalTotal ?? 0}
+                              onChange={(event) => setCompletingItem({ ...completingItem, finalTotal: Math.max(0, Math.min(b.subtotalHarga || 0, Number(event.target.value) || 0)) })}
+                              className="w-full max-w-xs min-h-[40px] rounded-lg border border-zinc-700 bg-zinc-950 px-3 text-sm font-mono text-stone-100"
                             />
                           </div>
                           <div className="flex gap-2">
