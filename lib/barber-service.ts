@@ -752,7 +752,7 @@ class BarberCompatibilityService {
     return {
       tanggal: operationalDayKey,
       kuotaMaksimal: existing ? existing.kuotaMaksimal : WALKIN_DAILY_QUOTA,
-      kuotaTerpakai: countUsed,
+      kuotaTerpakai: existing ? existing.kuotaTerpakai : countUsed,
     };
   }
 
