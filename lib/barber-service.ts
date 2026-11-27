@@ -44,28 +44,11 @@ import {
   SlotStatus,
 } from './types';
 
-export const STORAGE_VERSION = 6;
-const STORAGE_KEY = 'wib_barbershop_state_v6';
-const V5_STORAGE_KEY = 'wib_barbershop_state_v5';
-const V4_STORAGE_KEY = 'wib_barbershop_state_v4';
-const LEGACY_STORAGE_KEYS = [
-  'wib_barbershop_state_v1',
-  'wib_barbershop_state_v2',
-  'wib_barbershop_state_v3',
-  'wib_customer_walkin_id',
-  'wib_customer_booking_code',
-];
-
-const SESSION_ROLE_KEY = 'wib_session_role';
-const CUSTOMER_SESSION_ID_KEY = 'wib_customer_session_id';
-const CAPSTER_SESSION_ID_KEY = 'wib_capster_session_id';
+export const STORAGE_VERSION = 7;
 
 /**
- * CATATAN MIGRASI:
- * Autentikasi capster menggunakan Firebase Authentication.
- * Autentikasi pelanggan pada service legacy ini masih menyimpan hash password
- * dan data bisnis di localStorage. Jangan gunakan pola ini sebagai keamanan
- * produksi; migrasikan pelanggan ke Firebase Auth dan data operasional ke Firestore.
+ * Service kompatibilitas untuk kalkulasi jadwal, harga, dan state awal.
+ * Autentikasi serta data bisnis produksi dikelola Firebase Auth dan Firestore.
  */
 export function hashPasswordDemo(password: string): string {
   const salted = `wib_barber_salt_2026::${password}`;
@@ -83,7 +66,7 @@ export function hashPasswordDemo(password: string): string {
   return `wib_h1_${part1}${part2}`;
 }
 
-// Konfigurasi sistem awal: satu akun capster untuk Hasan (di-seed otomatis meski localStorage kosong).
+// Profil lokal awal untuk kalkulasi dan tampilan capster Hasan.
 // Password capster dikelola oleh Firebase Authentication.
 // Catatan produksi: manajemen kredensial capster & sesi WAJIB memakai backend / Firebase Auth.
 const SYSTEM_CAPSTERS: Capster[] = [
@@ -94,7 +77,7 @@ const SYSTEM_CAPSTERS: Capster[] = [
     spesialisasi: 'Classic Taper, Pompadour & Rapikan Jenggot',
     pengalaman: '2 tahun pengalaman menjadi capster di Waktu Indonesia Bercukur',
     username: 'hasan',
-    passwordHash: hashPasswordDemo('LOCAL_CAPSTER_LOGIN_DISABLED_USE_FIREBASE_AUTH'),
+    passwordHash: '',
     fotoKey: 'hasan',
   },
 ];
@@ -254,7 +237,7 @@ function migratePromosToV5(existingPromos?: Promo[]): Promo[] {
   return hasPotongSaja ? upgraded : [potSajaDefault, ...upgraded];
 }
 
-class BarberLocalStorageService {
+class BarberCompatibilityService {
   private memoryState: BarberDatabaseState = createInitialSystemState();
 
   private readRaw(): BarberDatabaseState {
@@ -2370,4 +2353,4 @@ class BarberLocalStorageService {
   }
 }
 
-export const barberService = new BarberLocalStorageService();
+export const barberService = new BarberCompatibilityService();
