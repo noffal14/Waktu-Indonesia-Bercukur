@@ -29,15 +29,21 @@ export async function GET(request: Request) {
     }, { merge: true });
   });
 
-  const stale = await db.collection('queuePrivate')
-    .where('status', '==', 'Waiting')
-    .where('operationalDayKey', '<', sessionKey)
-    .limit(400).get();
+  let expiredWaiting = 0;
+  while (true) {
+    const stale = await db.collection('queuePrivate')
+      .where('status', '==', 'Waiting')
+      .where('operationalDayKey', '<', sessionKey)
+      .limit(400).get();
+    if (stale.empty) break;
 
-  if (!stale.empty) {
     const batch = db.batch();
     stale.docs.forEach((doc) => {
-      batch.update(doc.ref, { status: 'Kedaluwarsa', expiredAt: Timestamp.now(), expirationReason: 'daily-reset' });
+      batch.update(doc.ref, {
+        status: 'Kedaluwarsa',
+        expiredAt: Timestamp.now(),
+        expirationReason: 'daily-reset',
+      });
       batch.set(db.collection('queuePublic').doc(doc.id), { status: 'Kedaluwarsa' }, { merge: true });
       const item = doc.data();
       if (item.customerUid && item.operationalDayKey) {
@@ -45,7 +51,8 @@ export async function GET(request: Request) {
       }
     });
     await batch.commit();
+    expiredWaiting += stale.size;
   }
 
-  return Response.json({ ok: true, sessionKey, expiredWaiting: stale.size });
+  return Response.json({ ok: true, sessionKey, expiredWaiting });
 }
