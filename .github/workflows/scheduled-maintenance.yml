@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: wib-scheduled-maintenance
+  group: wib-maintenance-${{ github.event.schedule || github.run_id }}
   cancel-in-progress: false
 
 jobs:
