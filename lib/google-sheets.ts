@@ -104,12 +104,14 @@ export async function upsertCustomerByWhatsApp(values: Record<string, string | n
   );
   if (index < 1) {
     const row = createSheetRow(headers, values);
-    await sheets.spreadsheets.values.append({
+    const response = await sheets.spreadsheets.values.append({
       spreadsheetId: getSpreadsheetId(), range,
       valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS',
       requestBody: { values: [row] },
     });
-    return { synced: true, created: true };
+    const updatedRange = response.data.updates?.updatedRange ?? '';
+    const rowNumber = Number(updatedRange.match(/![A-Z]+(\\d+)/)?.[1] ?? 0);
+    return { synced: true, created: true, rowNumber: rowNumber || undefined, updatedRange };
   }
 
   const rowNumber = index + 1;
