@@ -458,92 +458,177 @@ export function useBarberStore() {
   // CUSTOMER AUTH ACTIONS
   // =========================================================================
 
+  const commitStoreAction = useCallback(async <T,>(
+    action: string,
+    payload: Record<string, unknown> = {}
+  ): Promise<ServiceResult<T>> => {
+    const result = await callStoreApi<T>(action, payload);
+    if (!result.ok) {
+      return {
+        ok: false,
+        errorCode: (result.errorCode || 'INVALID_STATE') as ServiceResult<T>['errorCode'],
+        message: result.message,
+        conflictBookings: result.conflictBookings as DataBooking[] | undefined,
+      };
+    }
+    setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
+    return { ok: true, data: result.data };
+  }, []);
+
   const registerCustomer = useCallback(
-    (params: {
+    async (params: {
       nama: string;
       nomorWhatsApp: string;
       email?: string;
       password: string;
       capsterFavoritId?: string;
-    }) => {
-      const res = barberService.registerCustomer(params);
-      if (res.ok && res.data) {
-        setDbState(res.data.state);
+    }): Promise<ServiceResult<{ customer: Customer; state: BarberDatabaseState }>> => {
+      const nama = params.nama.trim();
+      const phone = validateIndonesianWhatsApp(params.nomorWhatsApp);
+      if (nama.length < 3 || !phone.valid) {
+        return { ok: false, errorCode: 'VALIDATION_ERROR', message: phone.error || 'Nama minimal 3 karakter.' };
+      }
+      if (params.password.length < 6) {
+        return { ok: false, errorCode: 'VALIDATION_ERROR', message: 'Password wajib diisi minimal 6 karakter.' };
+      }
+      if (!firebaseAuth) {
+        return { ok: false, errorCode: 'INVALID_STATE', message: 'Firebase Authentication belum dikonfigurasi.' };
+      }
+
+      const syntheticEmail = `${phone.normalized}@pelanggan.waktu-indonesia.app`;
+      try {
+        const credential = await createUserWithEmailAndPassword(firebaseAuth, syntheticEmail, params.password);
+        const result = await callCustomerAuthApi<Customer>('POST', {
+          nama,
+          nomorWhatsApp: phone.normalized,
+          email: params.email,
+          capsterFavoritId: params.capsterFavoritId || 'hasan',
+        });
+        if (!result.ok || !result.data) {
+          await credential.user.delete().catch(() => undefined);
+          await signOut(firebaseAuth).catch(() => undefined);
+          return {
+            ok: false,
+            errorCode: (result.errorCode || 'INVALID_STATE') as ServiceResult<Customer>['errorCode'],
+            message: result.message || 'Gagal menyimpan profil pelanggan.',
+          };
+        }
+
+        const customer = { ...result.data, id: credential.user.uid, passwordHash: '' };
+        setDbState((previous) => ({
+          ...previous,
+          customers: [customer],
+        }));
         setSessionRole('pelanggan');
-        setCustomerSessionId(res.data.customer.id);
+        setCustomerSessionId(credential.user.uid);
         setLoggedInCapsterId(null);
         setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
+        return { ok: true, data: { customer, state: dbState } };
+      } catch (error) {
+        const code = (error as { code?: string }).code;
+        const message = code === 'auth/email-already-in-use'
+          ? 'Nomor sudah terdaftar, silakan masuk.'
+          : code === 'auth/weak-password'
+            ? 'Password terlalu lemah. Gunakan minimal 6 karakter.'
+            : 'Pendaftaran gagal. Periksa koneksi dan coba lagi.';
+        return { ok: false, errorCode: 'VALIDATION_ERROR', message };
       }
-      return res;
     },
-    []
+    [dbState]
   );
 
   const loginCustomer = useCallback(
-    (nomorWhatsApp: string, password: string) => {
-      const res = barberService.loginCustomer(nomorWhatsApp, password);
-      if (res.ok && res.data) {
-        setDbState(res.data.state);
+    async (nomorWhatsApp: string, password: string): Promise<ServiceResult<{ customer: Customer; state: BarberDatabaseState }>> => {
+      const phone = validateIndonesianWhatsApp(nomorWhatsApp);
+      if (!phone.valid) return { ok: false, errorCode: 'VALIDATION_ERROR', message: phone.error };
+      if (!password) return { ok: false, errorCode: 'VALIDATION_ERROR', message: 'Password wajib diisi.' };
+      if (!firebaseAuth) return { ok: false, errorCode: 'INVALID_STATE', message: 'Firebase Authentication belum dikonfigurasi.' };
+      try {
+        const credential = await signInWithEmailAndPassword(
+          firebaseAuth,
+          `${phone.normalized}@pelanggan.waktu-indonesia.app`,
+          password
+        );
+        const result = await callCustomerAuthApi<Customer>('GET');
+        if (!result.ok || !result.data) {
+          await signOut(firebaseAuth).catch(() => undefined);
+          return { ok: false, errorCode: 'UNAUTHORIZED', message: result.message || 'Profil pelanggan tidak ditemukan.' };
+        }
+        const customer = { ...result.data, id: credential.user.uid, passwordHash: '' };
+        setDbState((previous) => ({ ...previous, customers: [customer] }));
         setSessionRole('pelanggan');
-        setCustomerSessionId(res.data.customer.id);
+        setCustomerSessionId(credential.user.uid);
         setLoggedInCapsterId(null);
         setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
+        return { ok: true, data: { customer, state: dbState } };
+      } catch {
+        return { ok: false, errorCode: 'UNAUTHORIZED', message: 'Nomor WhatsApp atau password salah.' };
       }
-      return res;
     },
-    []
+    [dbState]
   );
 
-  const logoutCustomer = useCallback(() => {
+  const logoutCustomer = useCallback(async () => {
+    if (firebaseAuth) await signOut(firebaseAuth).catch(() => undefined);
     barberService.logoutCustomer();
     setCustomerSessionId(null);
-    setSessionRole((prev) => (prev === 'pelanggan' ? null : prev));
+    setSessionRole((previous) => (previous === 'pelanggan' ? null : previous));
   }, []);
 
   const updateCustomerProfile = useCallback(
-    (params: {
+    async (params: {
       nama: string;
       email?: string;
       capsterFavoritId?: string;
       currentPassword?: string;
       newPassword?: string;
-    }) => {
-      if (!customerSessionId) {
-        return {
-          ok: false,
-          errorCode: 'AUTH_REQUIRED' as const,
-          message: 'Sesi pelanggan tidak aktif.',
-        };
+    }): Promise<ServiceResult<{ customer: Customer }>> => {
+      if (!customerSessionId || !firebaseAuth?.currentUser) {
+        return { ok: false, errorCode: 'AUTH_REQUIRED', message: 'Sesi pelanggan tidak aktif.' };
       }
-      const res = barberService.updateCustomerProfile(
-        customerSessionId,
-        params
-      );
-      if (res.ok && res.data) {
-        setDbState(res.data.state);
-        setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
+      if (params.newPassword) {
+        if (!params.currentPassword || params.newPassword.length < 6) {
+          return { ok: false, errorCode: 'VALIDATION_ERROR', message: 'Masukkan password saat ini dan password baru minimal 6 karakter.' };
+        }
+        try {
+          const user = firebaseAuth.currentUser;
+          const credential = EmailAuthProvider.credential(user.email || '', params.currentPassword);
+          await reauthenticateWithCredential(user, credential);
+          await updatePassword(user, params.newPassword);
+        } catch {
+          return { ok: false, errorCode: 'UNAUTHORIZED', message: 'Password saat ini tidak sesuai atau password baru ditolak Firebase.' };
+        }
       }
-      return res;
+      const result = await callCustomerAuthApi<Customer>('PATCH', {
+        nama: params.nama,
+        email: params.email,
+        capsterFavoritId: params.capsterFavoritId,
+      });
+      if (!result.ok || !result.data) {
+        return { ok: false, errorCode: (result.errorCode || 'INVALID_STATE') as ServiceResult<{ customer: Customer }>['errorCode'], message: result.message };
+      }
+      const customer = { ...result.data, id: customerSessionId, passwordHash: '' };
+      setDbState((previous) => ({ ...previous, customers: [customer] }));
+      setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
+      return { ok: true, data: { customer } };
     },
     [customerSessionId]
   );
 
-  const deleteCustomerAccount = useCallback(() => {
-    if (!customerSessionId) {
-      return {
-        ok: false,
-        errorCode: 'AUTH_REQUIRED' as const,
-        message: 'Sesi pelanggan tidak aktif.',
-      };
+  const deleteCustomerAccount = useCallback(async (): Promise<ServiceResult<unknown>> => {
+    if (!customerSessionId || !firebaseAuth?.currentUser) {
+      return { ok: false, errorCode: 'AUTH_REQUIRED', message: 'Sesi pelanggan tidak aktif.' };
     }
-    const res = barberService.deleteCustomerAccount(customerSessionId);
-    if (res.ok && res.data) {
-      setDbState(res.data);
-      setCustomerSessionId(null);
-      setSessionRole(null);
-      setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
+    const result = await callCustomerAuthApi('DELETE');
+    if (!result.ok) {
+      return { ok: false, errorCode: (result.errorCode || 'INVALID_STATE') as ServiceResult<unknown>['errorCode'], message: result.message };
     }
-    return res;
+    await signOut(firebaseAuth).catch(() => undefined);
+    setDbState((previous) => ({ ...previous, customers: [] }));
+    setCustomerSessionId(null);
+    setSessionRole(null);
+    setLastSyncedFormatted(formatTimeWibHHMM(Date.now()));
+    return { ok: true };
   }, [customerSessionId]);
 
   // =========================================================================
