@@ -73,6 +73,7 @@ export function LoginPageShell() {
   const [capsterPassword, setCapsterPassword] = useState('');
   const [showCapsterPassword, setShowCapsterPassword] = useState(false);
   const [capsterError, setCapsterError] = useState<string | null>(null);
+  const [capsterSubmitting, setCapsterSubmitting] = useState(false);
 
   const isCapsterLoggedIn =
     store.hydrated &&
@@ -115,17 +116,20 @@ export function LoginPageShell() {
     router,
   ]);
 
-  const handleCapsterSubmit = (e: React.FormEvent) => {
+  const handleCapsterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setCapsterError(null);
-
-    const res = store.loginCapster(capsterUsername, capsterPassword);
-    if (!res.ok) {
-      setCapsterError(res.message || 'Username atau password salah.');
-      return;
+    setCapsterSubmitting(true);
+    try {
+      const res = await store.loginCapster(capsterUsername, capsterPassword);
+      if (!res.ok) {
+        setCapsterError(res.message || 'Username atau password salah.');
+        return;
+      }
+      router.push('/capster/dashboard');
+    } finally {
+      setCapsterSubmitting(false);
     }
-
-    router.push('/capster/dashboard');
   };
 
   const handleCustomerAuthSuccess = () => {
@@ -269,7 +273,7 @@ export function LoginPageShell() {
                       </p>
                     </div>
 
-                    {capsterError && (
+                    {(capsterError || store.capsterSessionMessage) && (
                       <div className="p-3.5 rounded-xl bg-rose-950/50 border border-rose-500/40 text-xs sm:text-sm text-rose-200">
                         {capsterError}
                       </div>
@@ -335,10 +339,11 @@ export function LoginPageShell() {
 
                     <button
                       type="submit"
-                      className="w-full min-h-[52px] px-5 py-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 font-semibold text-base flex items-center justify-center gap-2 transition-colors"
+                      disabled={capsterSubmitting}
+                      className="w-full min-h-[52px] px-5 py-3 rounded-xl bg-amber-400 hover:bg-amber-300 disabled:opacity-60 text-zinc-950 font-semibold text-base flex items-center justify-center gap-2 transition-colors"
                     >
                       <UserCheck className="w-4 h-4 shrink-0" />
-                      <span>Masuk sebagai Capster</span>
+                      <span>{capsterSubmitting ? 'Memverifikasi...' : 'Masuk sebagai Capster'}</span>
                     </button>
                   </form>
                 )}
