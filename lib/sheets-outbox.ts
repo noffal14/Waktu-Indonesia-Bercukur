@@ -36,6 +36,8 @@ export async function drainSheetSyncQueue(maxItems = 50) {
   const db = getAdminDb();
   const snapshot = await db.collection('sheetSyncQueue')
     .where('status', 'in', ['pending', 'failed'])
+    .where('runAfter', '<=', Date.now())
+    .orderBy('runAfter', 'asc')
     .limit(Math.max(1, Math.min(100, maxItems)))
     .get();
 
