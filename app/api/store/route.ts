@@ -286,7 +286,7 @@ async function releaseBookingLocks(tx: FirebaseFirestore.Transaction, booking: a
   const refs = slots.map((slot: string) => db.collection('bookingSlots').doc(slotLockId(booking.capsterId, booking.tanggal, slot)));
   const snaps = await tx.getAll(...refs);
   snaps.forEach((snap) => {
-    if (snap.exists && snap.data()?.bookingId === booking.id) tx.set(snap.ref, { status: 'Released', releasedAt: Date.now() }, { merge: true });
+    if (snap.exists && (snap.data() as FirebaseFirestore.DocumentData | undefined)?.bookingId === booking.id) tx.set(snap.ref, { status: 'Released', releasedAt: Date.now() }, { merge: true });
   });
 }
 
