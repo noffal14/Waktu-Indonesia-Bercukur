@@ -44,6 +44,7 @@ import {
 } from '@/lib/barbershop-config';
 import { CapsterProfile } from '@/lib/capster-profile';
 import {
+  calculateServicesPricing,
   findServiceItemById,
   formatPromoShortBadge,
   formatRupiah,
@@ -473,11 +474,19 @@ export function CapsterPortalView({
       ? Math.max(15, Math.round((nowMs - waktuMulai) / 60_000))
       : 45;
     const booking = type === 'booking' ? dbState.bookings.find((item) => item.id === id) : null;
+    const walkinServices = type === 'walkin' ? [{ itemId: 'premium-haircut', qty: 1 }] : [];
+    const walkinPricing = calculateServicesPricing(
+      walkinServices,
+      dbState.promos.filter((promo) => isPromoActiveNow(promo, nowMs))
+    );
     setCompletingItem({
       type,
       id,
       minutes: computedElapsed,
-      ...(type === 'walkin' ? { selectedServices: [{ itemId: 'premium-haircut', qty: 1 }] } : {}),
+      ...(type === 'walkin' ? {
+        selectedServices: walkinServices,
+        finalTotal: walkinPricing.totalEstimasiMin,
+      } : {}),
       ...(type === 'booking' ? { finalTotal: booking?.totalEstimasiMin ?? booking?.subtotalHarga ?? 0 } : {}),
     });
   };
@@ -974,6 +983,31 @@ export function CapsterPortalView({
                           </div>
                           {completingItem.type === 'walkin' && (
                             <div className="space-y-2">
+                              <label className="block text-xs font-medium text-stone-200">Harga akhir setelah konfirmasi capster (Rp):</label>
+                              <input
+                                type="number"
+                                min={0}
+                                max={calculateServicesPricing(
+                                  completingItem.selectedServices || [],
+                                  dbState.promos.filter((promo) => isPromoActiveNow(promo, nowMs))
+                                ).subtotalHarga}
+                                value={completingItem.finalTotal ?? 0}
+                                onChange={(event) => {
+                                  const maxTotal = calculateServicesPricing(
+                                    completingItem.selectedServices || [],
+                                    dbState.promos.filter((promo) => isPromoActiveNow(promo, nowMs))
+                                  ).subtotalHarga;
+                                  setCompletingItem({
+                                    ...completingItem,
+                                    finalTotal: Math.max(0, Math.min(maxTotal, Number(event.target.value) || 0)),
+                                  });
+                                }}
+                                className="w-full max-w-xs min-h-[40px] rounded-lg border border-zinc-700 bg-zinc-950 px-3 text-sm font-mono text-stone-100"
+                              />
+                            </div>
+                          )}
+                          {completingItem.type === 'walkin' && (
+                            <div className="space-y-2">
                               <p className="text-xs font-medium text-stone-200">Pilih layanan yang dikerjakan:</p>
                               <div className="grid gap-2 sm:grid-cols-2">
                                 {SERVICE_CATALOG.map((category) => (
@@ -992,7 +1026,15 @@ export function CapsterPortalView({
                                                 const next = event.target.checked
                                                   ? [...current, { itemId: item.id, qty: 1 }]
                                                   : current.filter((entry) => entry.itemId !== item.id);
-                                                setCompletingItem({ ...completingItem, selectedServices: next });
+                                                const pricing = calculateServicesPricing(
+                                                  next,
+                                                  dbState.promos.filter((promo) => isPromoActiveNow(promo, nowMs))
+                                                );
+                                                setCompletingItem({
+                                                  ...completingItem,
+                                                  selectedServices: next,
+                                                  finalTotal: pricing.totalEstimasiMin,
+                                                });
                                               }}
                                             />
                                             <span>{item.nama}</span>
@@ -1014,7 +1056,8 @@ export function CapsterPortalView({
                                   onCompleteWalkin(
                                     w.id,
                                     completingItem.minutes,
-                                    completingItem.selectedServices || []
+                                    completingItem.selectedServices || [],
+                                    completingItem.finalTotal
                                   ),
                                   `Antrean ${w.nomorAntrean} selesai (${completingItem.minutes} menit).`
                                 );
