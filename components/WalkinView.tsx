@@ -48,7 +48,12 @@ interface WalkinViewProps {
     antreanDiDepan: number;
     estimasiMenit: number;
     state: BarberDatabaseState;
-  }>;
+  }> | Promise<ServiceResult<{
+    ticket: DataAntreanWalkin;
+    antreanDiDepan: number;
+    estimasiMenit: number;
+    state: BarberDatabaseState;
+  }>>;
   onNavigate: (view: AppView) => void;
   onBookTomorrow: (tomorrowStr: string) => void;
 }
@@ -104,10 +109,10 @@ export function WalkinView({
       ? activeCustomerWalkin
       : null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
-    const res = onTakeWalkin({
+    const res = await onTakeWalkin({
       customerId: currentCustomer.id,
       capsterId: capsterId || defaultCapsterId,
     });

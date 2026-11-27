@@ -11,7 +11,7 @@ export function CapsterPageShell() {
   const store = useBarberStore();
 
   useEffect(() => {
-    if (!store.hydrated) return;
+    if (!store.hydrated || !store.authReady) return;
     if (store.sessionRole === 'pelanggan') {
       const timer = window.setTimeout(() => {
         router.replace('/');
@@ -28,9 +28,9 @@ export function CapsterPageShell() {
       router.replace('/login?role=capster');
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [store.hydrated, store.sessionRole, store.loggedInCapster, router]);
+  }, [store.hydrated, store.authReady, store.sessionRole, store.loggedInCapster, router]);
 
-  if (store.hydrated && store.sessionRole === 'pelanggan') {
+  if (store.hydrated && store.authReady && store.sessionRole === 'pelanggan') {
     return (
       <div className="min-h-screen bg-[#0B0B0D] text-[#F5F5F4] flex items-center justify-center p-4">
         <div className="w-full max-w-md p-6 sm:p-8 rounded-2xl bg-rose-950/40 border border-rose-500/40 text-center space-y-4">

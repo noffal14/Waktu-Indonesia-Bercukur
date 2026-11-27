@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, ShieldAlert } from 'lucide-react';
+import { ArrowLeft, ShieldAlert, Wifi, WifiOff, RefreshCw } from 'lucide-react';
 import { useBarberStore } from '@/hooks/use-barber-store';
 
 const LazyCapsterPortalView = dynamic(
@@ -32,21 +32,22 @@ export function CapsterDashboardShell() {
 
   const isAuthorized =
     store.hydrated &&
+    store.authReady &&
     store.sessionRole === 'capster' &&
     Boolean(store.loggedInCapster);
 
-  const shouldRejectToHome = store.hydrated && !isAuthorized && !loggingOut;
+  const shouldRejectToHome = store.hydrated && store.authReady && !isAuthorized && !loggingOut;
 
   useEffect(() => {
     if (shouldRejectToHome) {
       const timer = window.setTimeout(() => {
-        router.replace('/');
+        router.replace('/login?role=capster');
       }, 900);
       return () => window.clearTimeout(timer);
     }
   }, [shouldRejectToHome, router]);
 
-  if (!store.hydrated || loggingOut) {
+  if (!store.hydrated || !store.authReady || loggingOut) {
     return (
       <div className="min-h-screen bg-[#0B0B0D] text-[#F5F5F4] flex items-center justify-center p-4">
         <div className="w-full max-w-md h-48 rounded-2xl bg-zinc-900/70 border border-zinc-800 animate-pulse" />
@@ -83,6 +84,31 @@ export function CapsterDashboardShell() {
   return (
     <div className="min-h-screen bg-[#0B0B0D] text-[#F5F5F4]">
       <main className="max-w-6xl mx-auto px-4 md:px-6 py-6 md:py-8">
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+          <div
+            title={`Update terakhir ${store.lastSyncedFormatted} WIB`}
+            className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs ${
+              store.isOffline || store.syncStatus === 'offline'
+                ? 'border-rose-500/30 bg-rose-950/30 text-rose-200'
+                : store.syncStatus === 'connected'
+                  ? 'border-emerald-500/30 bg-emerald-950/20 text-emerald-200'
+                  : 'border-amber-500/30 bg-amber-950/20 text-amber-200'
+            }`}
+          >
+            {store.isOffline || store.syncStatus === 'offline' ? (
+              <WifiOff className="h-4 w-4" />
+            ) : store.syncStatus === 'connected' ? (
+              <Wifi className="h-4 w-4" />
+            ) : (
+              <RefreshCw className="h-4 w-4 animate-spin" />
+            )}
+            <span>{store.isOffline || store.syncStatus === 'offline' ? 'Offline · data terakhir' : store.syncStatus === 'connected' ? 'Realtime terhubung' : store.syncStatus === 'reconnecting' ? 'Menghubungkan ulang' : 'Menghubungkan...'}</span>
+            <span className="font-mono tabular-nums text-[10px] opacity-80">{store.lastSyncedFormatted} WIB</span>
+          </div>
+          <Link href="/capster/spreadsheet" className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 text-xs font-semibold text-amber-300 hover:bg-amber-400/20">
+            Keuangan & Pelanggan
+          </Link>
+        </div>
         <LazyCapsterPortalView
           dbState={store.dbState}
           capsterProfile={store.capsterProfile}
@@ -96,9 +122,9 @@ export function CapsterDashboardShell() {
           sessionRole={store.sessionRole}
           loggedInCapster={store.loggedInCapster}
           onRedirectHome={() => router.replace('/')}
-          onLogout={() => {
+          onLogout={async () => {
             setLoggingOut(true);
-            store.logoutCapster();
+            await store.logoutCapster();
             router.replace('/login?role=capster');
           }}
           onCallWalkin={store.callWalkin}

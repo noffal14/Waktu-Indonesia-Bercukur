@@ -50,6 +50,7 @@ interface BookingViewProps {
   dbState: BarberDatabaseState;
   capsterProfile: CapsterProfile;
   todayStr: string;
+  nowMs: number;
   currentCustomer: Customer;
   activePromos: Promo[];
   preselectedBooking?: {
@@ -68,7 +69,10 @@ interface BookingViewProps {
   }) => ServiceResult<{
     booking: DataBooking;
     state: BarberDatabaseState;
-  }>;
+  }> | Promise<ServiceResult<{
+    booking: DataBooking;
+    state: BarberDatabaseState;
+  }>>;
   onNavigate: (view: AppView) => void;
 }
 
@@ -76,6 +80,7 @@ export function BookingView({
   dbState,
   capsterProfile,
   todayStr,
+  nowMs,
   currentCustomer,
   activePromos,
   preselectedBooking,
@@ -137,7 +142,9 @@ export function BookingView({
   const { config, slots } = barberService.getComputedSlots(
     dbState,
     selectedCapster.id,
-    effectiveTanggal
+    effectiveTanggal,
+    undefined,
+    nowMs
   );
 
   // Validasi apakah slot yang saat ini dipilih masih cukup untuk durasi layanan terbaru
@@ -180,7 +187,7 @@ export function BookingView({
     });
   };
 
-  const handleConfirmBooking = (e: React.FormEvent) => {
+  const handleConfirmBooking = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
 
@@ -196,7 +203,7 @@ export function BookingView({
       return;
     }
 
-    const res = onCreateBooking({
+    const res = await onCreateBooking({
       customerId: currentCustomer.id,
       capsterId: selectedCapster.id,
       tanggal: effectiveTanggal,

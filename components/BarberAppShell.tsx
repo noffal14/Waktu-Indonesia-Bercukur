@@ -60,14 +60,14 @@ export function BarberAppShell() {
   }
 
   useEffect(() => {
-    if (!store.hydrated) return;
+    if (!store.hydrated || !store.authReady) return;
     if (
       PROTECTED_CUSTOMER_VIEWS.includes(currentView) &&
       !store.currentCustomer
     ) {
       router.replace(`/login?redirect=${currentView}`);
     }
-  }, [store.hydrated, store.currentCustomer, currentView, router]);
+  }, [store.hydrated, store.authReady, store.currentCustomer, currentView, router]);
 
   const scrollToTop = () => {
     if (typeof window !== 'undefined') {
@@ -136,10 +136,13 @@ export function BarberAppShell() {
         onNavigate={navigateTo}
         currentCustomer={store.currentCustomer}
         onLogoutCustomer={handleLogoutCustomer}
+        syncStatus={store.syncStatus}
+        isOffline={store.isOffline}
+        lastSyncedFormatted={store.lastSyncedFormatted}
       />
 
       <main className="flex-1 w-full pb-24 lg:pb-12">
-        {!store.hydrated ? (
+        {!store.hydrated || !store.authReady ? (
           <div className="max-w-6xl mx-auto px-4 md:px-6 pt-6 md:pt-8 space-y-6 animate-pulse">
             <div className="h-64 rounded-2xl bg-zinc-900/70 border border-zinc-800" />
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -163,6 +166,7 @@ export function BarberAppShell() {
                   dbState={store.dbState}
                   capsterProfile={store.capsterProfile}
                   todayStr={store.todayStr}
+                  nowMs={store.nowMs}
                   liveClockText={store.liveClockText}
                   shopStatus={store.shopStatus}
                   todayQuota={store.todayQuota}
@@ -202,6 +206,7 @@ export function BarberAppShell() {
                       activeCustomerWalkin={store.activeCustomerWalkin}
                       activeCustomerBooking={store.activeCustomerBooking}
                       isOffline={store.isOffline}
+                      syncStatus={store.syncStatus}
                       lastSyncedFormatted={store.lastSyncedFormatted}
                       onRefresh={store.refreshFromStore}
                       onNavigate={navigateTo}
@@ -212,6 +217,7 @@ export function BarberAppShell() {
                     <ScheduleView
                       dbState={store.dbState}
                       todayStr={store.todayStr}
+                      nowMs={store.nowMs}
                       initialCapsterId={scheduleCapsterId}
                       onSelectSlotToBook={handleSelectSlotToBook}
                     />
@@ -223,6 +229,7 @@ export function BarberAppShell() {
                       dbState={store.dbState}
                       capsterProfile={store.capsterProfile}
                       todayStr={store.todayStr}
+                      nowMs={store.nowMs}
                       currentCustomer={store.currentCustomer}
                       activePromos={store.activePromos}
                       preselectedBooking={preselectedBooking}
@@ -257,8 +264,8 @@ export function BarberAppShell() {
                       currentCustomer={store.currentCustomer}
                       capsters={store.dbState.capsters}
                       onUpdateProfile={store.updateCustomerProfile}
-                      onDeleteAccount={() => {
-                        const res = store.deleteCustomerAccount();
+                      onDeleteAccount={async () => {
+                        const res = await store.deleteCustomerAccount();
                         if (res.ok) {
                           setCurrentView('beranda');
                           if (viewParam) {

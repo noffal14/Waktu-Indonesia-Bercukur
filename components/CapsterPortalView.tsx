@@ -44,8 +44,10 @@ import {
 } from '@/lib/barbershop-config';
 import { CapsterProfile } from '@/lib/capster-profile';
 import {
+  calculateServicesPricing,
   findServiceItemById,
   formatPromoShortBadge,
+  formatRupiah,
   formatRupiahRange,
   isPromoActiveNow,
   SERVICE_CATALOG,
@@ -59,6 +61,7 @@ import {
   QueueEstimationSummary,
   ServiceResult,
   SessionRole,
+  SelectedServiceInput,
 } from '@/lib/types';
 import { AboutCapster } from './AboutCapster';
 import { CapsterAvatar } from './BarbershopMedia';
@@ -81,31 +84,34 @@ interface CapsterPortalViewProps {
   onCallWalkin: (
     walkinId: string,
     capsterId?: string
-  ) => ServiceResult<BarberDatabaseState>;
+  ) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onCompleteWalkin: (
     walkinId: string,
-    overrideDurationMinutes?: number
-  ) => ServiceResult<BarberDatabaseState>;
-  onCancelWalkin: (walkinId: string) => ServiceResult<BarberDatabaseState>;
-  onStartBooking: (bookingId: string) => ServiceResult<BarberDatabaseState>;
+    overrideDurationMinutes?: number,
+    selectedServices?: SelectedServiceInput[],
+    finalTotal?: number
+  ) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
+  onCancelWalkin: (walkinId: string) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
+  onStartBooking: (bookingId: string) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onCompleteBooking: (
     bookingId: string,
-    overrideDurationMinutes?: number
-  ) => ServiceResult<BarberDatabaseState>;
+    overrideDurationMinutes?: number,
+    finalTotal?: number
+  ) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onCancelBookingManual: (
     bookingId: string
-  ) => ServiceResult<BarberDatabaseState>;
+  ) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onUpdateQuota: (
     operationalDayKey: string,
     maxQuota: number
-  ) => ServiceResult<BarberDatabaseState>;
+  ) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onSetDayOff: (params: {
     capsterId: string;
     tanggal: string;
     isLibur: boolean;
     alasanLibur?: string;
     forceCancelConflicts?: boolean;
-  }) => ServiceResult<BarberDatabaseState>;
+  }) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onSetSlotManual: (params: {
     capsterId: string;
     tanggal: string;
@@ -113,7 +119,7 @@ interface CapsterPortalViewProps {
     mode: 'tersedia' | 'tidak_tersedia' | 'terisi_manual';
     catatan?: string;
     forceCancelConflict?: boolean;
-  }) => ServiceResult<BarberDatabaseState>;
+  }) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onCreatePromo: (params: {
     judul: string;
     deskripsi: string;
@@ -123,7 +129,7 @@ interface CapsterPortalViewProps {
     aktif: boolean;
     berlakuDari?: string;
     berlakuSampai?: string;
-  }) => ServiceResult<BarberDatabaseState>;
+  }) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onUpdatePromo: (
     promoId: string,
     params: {
@@ -136,20 +142,20 @@ interface CapsterPortalViewProps {
       berlakuDari?: string;
       berlakuSampai?: string;
     }
-  ) => ServiceResult<BarberDatabaseState>;
-  onTogglePromoActive: (promoId: string) => ServiceResult<BarberDatabaseState>;
-  onDeletePromo: (promoId: string) => ServiceResult<BarberDatabaseState>;
+  ) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
+  onTogglePromoActive: (promoId: string) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
+  onDeletePromo: (promoId: string) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onUpdateCapsterProfile: (params: {
     pengalaman: string;
     nomorWhatsApp: string;
     instagramCapster: string;
     instagramBarbershop: string;
-  }) => ServiceResult<BarberDatabaseState>;
+  }) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onChangeCapsterPassword: (params: {
     currentPassword: string;
     newPassword: string;
     confirmPassword: string;
-  }) => ServiceResult<BarberDatabaseState>;
+  }) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
 }
 
 type DashboardTab = 'berlangsung' | 'riwayat' | 'jadwal' | 'promo' | 'profil';
@@ -210,6 +216,8 @@ export function CapsterPortalView({
     type: 'walkin' | 'booking';
     id: string;
     minutes: number;
+    selectedServices?: SelectedServiceInput[];
+    finalTotal?: number;
   } | null>(null);
 
   const [quotaInput, setQuotaInput] = useState<number>(
@@ -466,22 +474,40 @@ export function CapsterPortalView({
     const computedElapsed = waktuMulai
       ? Math.max(15, Math.round((nowMs - waktuMulai) / 60_000))
       : 45;
-    setCompletingItem({ type, id, minutes: computedElapsed });
+    const booking = type === 'booking' ? dbState.bookings.find((item) => item.id === id) : null;
+    const walkinServices = type === 'walkin' ? [] : [];
+    const walkinPricing = calculateServicesPricing(
+      walkinServices,
+      dbState.promos.filter((promo) => isPromoActiveNow(promo, nowMs))
+    );
+    setCompletingItem({
+      type,
+      id,
+      minutes: computedElapsed,
+      ...(type === 'walkin' ? {
+        selectedServices: walkinServices,
+        finalTotal: walkinPricing.totalEstimasiMin,
+      } : {}),
+      ...(type === 'booking' ? { finalTotal: booking?.totalEstimasiMin ?? booking?.subtotalHarga ?? 0 } : {}),
+    });
   };
 
-  const handleActionResult = (
-    res: ServiceResult<BarberDatabaseState>,
+  const handleActionResult = async (
+    result: ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>,
     successMsg?: string
   ) => {
-    if (!res.ok) {
-      setActionNotice({
-        type: 'error',
-        text: res.message || 'Aksi gagal dijalankan.',
-      });
-      return;
-    }
-    if (successMsg) {
-      setActionNotice({ type: 'success', text: successMsg });
+    try {
+      const res = await result;
+      if (!res.ok) {
+        setActionNotice({
+          type: 'error',
+          text: res.message || 'Aksi gagal dijalankan.',
+        });
+        return;
+      }
+      if (successMsg) setActionNotice({ type: 'success', text: successMsg });
+    } catch {
+      setActionNotice({ type: 'error', text: 'Koneksi gagal. Silakan coba lagi.' });
     }
   };
 
@@ -496,9 +522,9 @@ export function CapsterPortalView({
       effectiveSchedDate
     );
 
-  const handleToggleDayOff = (forceCancelConflicts = false) => {
+  const handleToggleDayOff = async (forceCancelConflicts = false) => {
     const nextLibur = !editConfig.isLibur;
-    const res = onSetDayOff({
+    const res = await onSetDayOff({
       capsterId: loggedInCapster.id,
       tanggal: effectiveSchedDate,
       isLibur: nextLibur,
@@ -532,13 +558,13 @@ export function CapsterPortalView({
     );
   };
 
-  const handleApplySlotManual = (
+  const handleApplySlotManual = async (
     jam: string,
     mode: 'tersedia' | 'tidak_tersedia' | 'terisi_manual',
     catatan?: string,
     forceCancelConflict = false
   ) => {
-    const res = onSetSlotManual({
+    const res = await onSetSlotManual({
       capsterId: loggedInCapster.id,
       tanggal: effectiveSchedDate,
       jam,
@@ -578,10 +604,10 @@ export function CapsterPortalView({
     );
   };
 
-  const handleConfirmConflictCancellation = () => {
+  const handleConfirmConflictCancellation = async () => {
     if (!pendingConflict) return;
     if (pendingConflict.kind === 'dayoff') {
-      const res = onSetDayOff({
+      const res = await onSetDayOff({
         capsterId: pendingConflict.capsterId,
         tanggal: pendingConflict.tanggal,
         isLibur: pendingConflict.isLibur,
@@ -598,7 +624,7 @@ export function CapsterPortalView({
       return;
     }
 
-    const res = onSetSlotManual({
+    const res = await onSetSlotManual({
       capsterId: pendingConflict.capsterId,
       tanggal: pendingConflict.tanggal,
       jam: pendingConflict.jam,
@@ -956,20 +982,90 @@ export function CapsterPortalView({
                               className="w-20 min-h-[38px] px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-700 text-xs font-mono text-stone-100"
                             />
                           </div>
+                          {completingItem.type === 'walkin' && (
+                            <div className="space-y-2">
+                              <label className="block text-xs font-medium text-stone-200">Harga akhir setelah konfirmasi capster (Rp):</label>
+                              <input
+                                type="number"
+                                min={0}
+                                max={calculateServicesPricing(
+                                  completingItem.selectedServices || [],
+                                  dbState.promos.filter((promo) => isPromoActiveNow(promo, nowMs))
+                                ).subtotalHarga}
+                                value={completingItem.finalTotal ?? 0}
+                                onChange={(event) => {
+                                  const maxTotal = calculateServicesPricing(
+                                    completingItem.selectedServices || [],
+                                    dbState.promos.filter((promo) => isPromoActiveNow(promo, nowMs))
+                                  ).subtotalHarga;
+                                  setCompletingItem({
+                                    ...completingItem,
+                                    finalTotal: Math.max(0, Math.min(maxTotal, Number(event.target.value) || 0)),
+                                  });
+                                }}
+                                className="w-full max-w-xs min-h-[40px] rounded-lg border border-zinc-700 bg-zinc-950 px-3 text-sm font-mono text-stone-100"
+                              />
+                            </div>
+                          )}
+                          {completingItem.type === 'walkin' && (
+                            <div className="space-y-2">
+                              <p className="text-xs font-medium text-stone-200">Pilih layanan yang dikerjakan:</p>
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                {SERVICE_CATALOG.map((category) => (
+                                  <div key={category.id} className="rounded-lg border border-zinc-800 p-2.5 space-y-1">
+                                    <p className="text-[11px] font-semibold text-amber-300">{category.nama}</p>
+                                    {category.items.map((item) => {
+                                      const current = completingItem.selectedServices || [];
+                                      const selected = current.find((entry) => entry.itemId === item.id);
+                                      return (
+                                        <label key={item.id} className="flex items-center justify-between gap-2 text-xs text-zinc-300">
+                                          <span className="flex min-w-0 items-center gap-2">
+                                            <input
+                                              type="checkbox"
+                                              checked={Boolean(selected)}
+                                              onChange={(event) => {
+                                                const next = event.target.checked
+                                                  ? [...current, { itemId: item.id, qty: 1 }]
+                                                  : current.filter((entry) => entry.itemId !== item.id);
+                                                const pricing = calculateServicesPricing(
+                                                  next,
+                                                  dbState.promos.filter((promo) => isPromoActiveNow(promo, nowMs))
+                                                );
+                                                setCompletingItem({
+                                                  ...completingItem,
+                                                  selectedServices: next,
+                                                  finalTotal: pricing.totalEstimasiMin,
+                                                });
+                                              }}
+                                            />
+                                            <span>{item.nama}</span>
+                                          </span>
+                                          <span className="whitespace-nowrap text-zinc-500">{formatRupiah(item.harga)}</span>
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                           <div className="flex gap-2">
                             <button
                               type="button"
+                              disabled={completingItem.type === 'walkin' && !(completingItem.selectedServices || []).length}
                               onClick={() => {
                                 handleActionResult(
                                   onCompleteWalkin(
                                     w.id,
-                                    completingItem.minutes
+                                    completingItem.minutes,
+                                    completingItem.selectedServices || [],
+                                    completingItem.finalTotal
                                   ),
                                   `Antrean ${w.nomorAntrean} selesai (${completingItem.minutes} menit).`
                                 );
                                 setCompletingItem(null);
                               }}
-                              className="min-h-[42px] px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-xs font-semibold"
+                              className="min-h-[42px] px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-950 text-xs font-semibold"
                             >
                               Simpan &amp; Selesaikan
                             </button>
@@ -1189,6 +1285,17 @@ export function CapsterPortalView({
                               className="w-20 min-h-[38px] px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-700 text-xs font-mono text-stone-100"
                             />
                           </div>
+                          <div className="space-y-1.5">
+                            <label className="block text-xs font-medium text-stone-200">Harga akhir setelah konfirmasi capster (Rp):</label>
+                            <input
+                              type="number"
+                              min={0}
+                              max={b.subtotalHarga || 0}
+                              value={completingItem.finalTotal ?? 0}
+                              onChange={(event) => setCompletingItem({ ...completingItem, finalTotal: Math.max(0, Math.min(b.subtotalHarga || 0, Number(event.target.value) || 0)) })}
+                              className="w-full max-w-xs min-h-[40px] rounded-lg border border-zinc-700 bg-zinc-950 px-3 text-sm font-mono text-stone-100"
+                            />
+                          </div>
                           <div className="flex gap-2">
                             <button
                               type="button"
@@ -1196,7 +1303,8 @@ export function CapsterPortalView({
                                 handleActionResult(
                                   onCompleteBooking(
                                     b.id,
-                                    completingItem.minutes
+                                    completingItem.minutes,
+                                    completingItem.finalTotal
                                   ),
                                   `Booking ${b.kodeTiket} selesai (${completingItem.minutes} menit).`
                                 );
@@ -1972,7 +2080,7 @@ export function CapsterPortalView({
             )}
 
             <form
-              onSubmit={(e) => {
+              onSubmit={async (e) => {
                 e.preventDefault();
                 setPromoFormError(null);
 
@@ -1987,9 +2095,9 @@ export function CapsterPortalView({
                   berlakuSampai: promoBerlakuSampai || undefined,
                 };
 
-                const res = editingPromoId
+                const res = await (editingPromoId
                   ? onUpdatePromo(editingPromoId, payload)
-                  : onCreatePromo(payload);
+                  : onCreatePromo(payload));
 
                 if (!res.ok) {
                   setPromoFormError(
@@ -2204,10 +2312,10 @@ export function CapsterPortalView({
               )}
 
               <form
-                onSubmit={(e) => {
+                onSubmit={async (e) => {
                   e.preventDefault();
                   setProfileFormError(null);
-                  const res = onUpdateCapsterProfile({
+                  const res = await onUpdateCapsterProfile({
                     pengalaman: profPengalaman,
                     nomorWhatsApp: profWa,
                     instagramCapster: profIgCapster,
@@ -2335,7 +2443,7 @@ export function CapsterPortalView({
               )}
 
               <form
-                onSubmit={(e) => {
+                onSubmit={async (e) => {
                   e.preventDefault();
                   setCapsterPwdError(null);
                   setCapsterPwdSuccess(null);
@@ -2355,7 +2463,7 @@ export function CapsterPortalView({
                     return;
                   }
 
-                  const res = onChangeCapsterPassword({
+                  const res = await onChangeCapsterPassword({
                     currentPassword: capsterCurrPwd,
                     newPassword: capsterNewPwd,
                     confirmPassword: capsterConfirmPwd,

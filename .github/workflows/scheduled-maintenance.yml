@@ -1,0 +1,67 @@
+name: Scheduled maintenance
+
+on:
+  schedule:
+    - cron: '0 3,5 * * *'
+    - cron: '*/5 * * * *'
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wib-maintenance-${{ github.event.schedule || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  daily-reset:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 3,5 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Reset WIB operational queue
+        env:
+          APP_URL: ${{ secrets.WIB_APP_URL }}
+          CRON_SECRET: ${{ secrets.WIB_CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          test -n "$APP_URL"
+          test -n "$CRON_SECRET"
+          curl --fail --silent --show-error --retry 2 --retry-delay 5 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/cron/daily-reset"
+
+  booking-expiry:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '*/5 * * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Cancel overdue bookings
+        env:
+          APP_URL: ${{ secrets.WIB_APP_URL }}
+          CRON_SECRET: ${{ secrets.WIB_CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          test -n "$APP_URL"
+          test -n "$CRON_SECRET"
+          curl --fail --silent --show-error --retry 2 --retry-delay 5 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/cron/booking-expiry"
+
+  sheets-retry:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '*/15 * * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Retry pending Google Sheets synchronization
+        env:
+          APP_URL: ${{ secrets.WIB_APP_URL }}
+          CRON_SECRET: ${{ secrets.WIB_CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          test -n "$APP_URL"
+          test -n "$CRON_SECRET"
+          curl --fail --silent --show-error --retry 2 --retry-delay 5 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/cron/sheets-retry"

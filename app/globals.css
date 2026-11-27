@@ -1,6 +1,9 @@
 @import "tailwindcss";
 
 :root {
+  --wib-font-display: "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
+  --wib-font-sans: "Segoe UI", Arial, system-ui, sans-serif;
+  --wib-font-mono: "Cascadia Code", Consolas, "Courier New", monospace;
   --wib-bg: #0b0b0d;
   --wib-surface: #131317;
   --wib-surface-elevated: #18181d;
@@ -13,9 +16,9 @@
 }
 
 @theme inline {
-  --font-display: var(--font-display), system-ui, sans-serif;
-  --font-sans: var(--font-sans), system-ui, sans-serif;
-  --font-mono: var(--font-mono), monospace;
+  --font-display: var(--wib-font-display);
+  --font-sans: var(--wib-font-sans);
+  --font-mono: var(--wib-font-mono);
 }
 
 @layer base {

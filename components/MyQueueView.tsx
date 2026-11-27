@@ -46,14 +46,14 @@ interface MyQueueViewProps {
   isOffline: boolean;
   lastSyncedFormatted: string;
   onRefresh: () => void;
-  onCancelWalkin: (walkinId: string) => ServiceResult<BarberDatabaseState>;
+  onCancelWalkin: (walkinId: string) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onRescheduleBooking: (params: {
     bookingId: string;
     newCapsterId: string;
     newTanggal: string;
     newJamSlot: string;
-  }) => ServiceResult<{ booking: DataBooking; state: BarberDatabaseState }>;
-  onCancelBooking: (bookingId: string) => ServiceResult<BarberDatabaseState>;
+  }) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
+  onCancelBooking: (bookingId: string) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onNavigate: (view: AppView) => void;
 }
 
@@ -192,9 +192,9 @@ export function MyQueueView({
     setActionMsg(null);
   };
 
-  const handleConfirmReschedule = () => {
+  const handleConfirmReschedule = async () => {
     if (!reschedulingBooking || !reschedSlot) return;
-    const res = onRescheduleBooking({
+    const res = await onRescheduleBooking({
       bookingId: reschedulingBooking.id,
       newCapsterId: reschedCapsterId,
       newTanggal: reschedDate,
@@ -230,7 +230,8 @@ export function MyQueueView({
     dbState,
     reschedCapsterId,
     effectiveReschedDate,
-    reschedulingBooking?.id
+    reschedulingBooking?.id,
+    nowMs
   );
 
   return (
@@ -477,8 +478,8 @@ export function MyQueueView({
                       </span>
                       <button
                         type="button"
-                        onClick={() => {
-                          const res = onCancelWalkin(myActiveWalkin.id);
+                        onClick={async () => {
+                          const res = await onCancelWalkin(myActiveWalkin.id);
                           setConfirmCancelWalkinId(null);
                           setActionMsg({
                             type: res.ok ? 'success' : 'error',
@@ -684,8 +685,8 @@ export function MyQueueView({
                           </span>
                           <button
                             type="button"
-                            onClick={() => {
-                              const res = onCancelBooking(b.id);
+                            onClick={async () => {
+                              const res = await onCancelBooking(b.id);
                               setConfirmCancelBookingId(null);
                               setActionMsg({
                                 type: res.ok ? 'success' : 'error',

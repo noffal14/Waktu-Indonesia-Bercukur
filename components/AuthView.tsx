@@ -23,14 +23,14 @@ interface AuthViewProps {
   onLogin: (
     nomorWhatsApp: string,
     password: string
-  ) => ServiceResult<{ customer: Customer }>;
+  ) => ServiceResult<{ customer: Customer }> | Promise<ServiceResult<{ customer: Customer }>>;
   onRegister: (params: {
     nama: string;
     nomorWhatsApp: string;
     email?: string;
     password: string;
     capsterFavoritId?: string;
-  }) => ServiceResult<{ customer: Customer }>;
+  }) => ServiceResult<{ customer: Customer }> | Promise<ServiceResult<{ customer: Customer }>>;
   onAuthSuccess: () => void;
 }
 
@@ -65,7 +65,7 @@ export function AuthView({
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [regSubmitError, setRegSubmitError] = useState<string | null>(null);
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
 
@@ -86,7 +86,7 @@ export function AuthView({
       }
     }
 
-    const res = onLogin(loginWa, loginPassword);
+    const res = await onLogin(loginWa, loginPassword);
     if (!res.ok) {
       setLoginError(res.message || 'Gagal masuk. Periksa kembali data Anda.');
       return;
@@ -94,7 +94,7 @@ export function AuthView({
     onAuthSuccess();
   };
 
-  const handleRegisterSubmit = (e: React.FormEvent) => {
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setRegSubmitError(null);
     const errors: Record<string, string> = {};
@@ -133,7 +133,7 @@ export function AuthView({
       return;
     }
 
-    const res = onRegister({
+    const res = await onRegister({
       nama: regNama,
       nomorWhatsApp: regWa,
       email: regEmail || undefined,
