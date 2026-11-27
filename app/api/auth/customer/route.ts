@@ -117,6 +117,19 @@ export async function PATCH(request: Request) {
       diperbaruiPada: Date.now(),
     });
     const updated = (await ref.get()).data();
+    const sheetValues = {
+      'Nama': updated?.nama || '',
+      'Nomor WhatsApp': updated?.nomorWhatsApp || '',
+      'Email': updated?.email || '',
+      'Tanggal Daftar': new Date(updated?.dibuatPada || Date.now()).toISOString(),
+      'Kunjungan Terakhir': updated?.kunjunganTerakhir || '',
+      'Total Kunjungan': Number(updated?.totalKunjungan || 0),
+    };
+    try {
+      await upsertCustomerByWhatsApp(sheetValues);
+    } catch {
+      await enqueueSheetSync(`customer-${String(updated?.nomorWhatsApp || decoded.uid)}`, 'upsertCustomer', sheetValues);
+    }
     return Response.json({ ok: true, customer: { ...updated, id: decoded.uid, passwordHash: '' } });
   } catch (error) {
     const code = error instanceof Error ? error.message : '';
