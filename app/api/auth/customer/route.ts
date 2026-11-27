@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
 function emailForPhone(phone: string) {
   return `${phone}@pelanggan.waktu-indonesia.app`;
 }
-async function getUid(request: Request) {
+async function getUid(request: Request, allowMissingProfile = false) {
   const authorization = request.headers.get('authorization') || '';
   const token = authorization.match(/^Bearer\s+(.+)$/i)?.[1];
   if (!token) throw new Error('AUTH_REQUIRED');
@@ -20,12 +20,19 @@ async function getUid(request: Request) {
     throw new Error('AUTH_REQUIRED');
   }
   if (decoded.role === 'capster') throw new Error('FORBIDDEN');
+  const email = String(decoded.email || '').toLowerCase();
+  const phoneFromEmail = email.match(/^(628\\d{8,12})@pelanggan\\.waktu-indonesia\\.app$/)?.[1];
+  if (!phoneFromEmail) throw new Error('FORBIDDEN');
+  if (!allowMissingProfile) {
+    const profile = await getAdminDb().collection('customers').doc(decoded.uid).get();
+    if (!profile.exists || profile.data()?.nomorWhatsApp !== phoneFromEmail) throw new Error('FORBIDDEN');
+  }
   return decoded;
 }
 
 export async function POST(request: Request) {
   try {
-    const decoded = await getUid(request);
+    const decoded = await getUid(request, true);
     const body = await request.json();
     const nama = String(body.nama || '').trim();
     const phoneCheck = validateIndonesianWhatsApp(String(body.nomorWhatsApp || ''));
@@ -71,7 +78,7 @@ export async function POST(request: Request) {
   } catch (error) {
     const code = error instanceof Error ? error.message : '';
     if (code === 'AUTH_REQUIRED') return Response.json({ ok: false, message: 'Silakan masuk kembali.', errorCode: 'AUTH_REQUIRED' }, { status: 401 });
-    if (code === 'FORBIDDEN') return Response.json({ ok: false, message: 'Akun ini bukan akun pelanggan.', errorCode: 'UNAUTHORIZED' }, { status: 403 });
+    if (code === 'FORBIDDEN') return Response.json({ ok: false, message: 'Akun ini bukan akun pelanggan yang terdaftar.', errorCode: 'UNAUTHORIZED' }, { status: 403 });
     if (code === 'PHONE_EXISTS') return Response.json({ ok: false, message: 'Nomor WhatsApp sudah terdaftar.', errorCode: 'VALIDATION_ERROR' }, { status: 409 });
     if (code === 'ACCOUNT_EXISTS') return Response.json({ ok: false, message: 'Akun pelanggan sudah memiliki profil.', errorCode: 'INVALID_STATE' }, { status: 409 });
     console.error('[customer-auth-register]', error);
