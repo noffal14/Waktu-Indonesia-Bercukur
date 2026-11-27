@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { randomUUID } from 'node:crypto';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
 import {
@@ -78,6 +79,7 @@ export async function drainSheetSyncQueue(maxItems = 50) {
       ? db.collection('sheetSyncLocks').doc(lockKey)
       : null;
 
+    const workerToken = randomUUID();
     const claimed = await db.runTransaction(async (tx) => {
       const current = await tx.get(item.ref);
       if (!current.exists) return false;
@@ -88,7 +90,7 @@ export async function drainSheetSyncQueue(maxItems = 50) {
       const syncLock = syncLockRef ? await tx.get(syncLockRef) : null;
       const lockData = syncLock?.data();
       const lockActive = Number(lockData?.leaseUntil || 0) > Date.now();
-      if (syncLock?.exists && lockActive && lockData?.ownerJobId !== item.id) return false;
+      if (syncLock?.exists && lockActive && lockData?.ownerToken !== workerToken) return false;
 
       tx.update(item.ref, {
         status: 'processing',
@@ -98,6 +100,7 @@ export async function drainSheetSyncQueue(maxItems = 50) {
       if (syncLockRef) {
         tx.set(syncLockRef, {
           ownerJobId: item.id,
+          ownerToken: workerToken,
           leaseUntil: Date.now() + 10 * 60_000,
           updatedAt: FieldValue.serverTimestamp(),
         });
@@ -114,7 +117,7 @@ export async function drainSheetSyncQueue(maxItems = 50) {
       if (!syncLockRef) return;
       await db.runTransaction(async (tx) => {
         const lock = await tx.get(syncLockRef);
-        if (lock.exists && lock.data()?.ownerJobId === item.id) {
+        if (lock.exists && lock.data()?.ownerToken === workerToken) {
           tx.delete(syncLockRef);
         }
       });
