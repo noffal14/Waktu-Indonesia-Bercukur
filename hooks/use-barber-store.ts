@@ -305,6 +305,10 @@ export function useBarberStore() {
     };
   }, [hydrated]);
 
+  const shopStatus = useMemo(() => getShopOperationalStatus(nowMs), [nowMs]);
+  const todayStr = shopStatus.todayStr;
+  const operationalDayKey = shopStatus.operationalDayKey;
+
   useEffect(() => {
     const db = firestore;
     if (!hydrated || !db) return;
@@ -447,9 +451,6 @@ export function useBarberStore() {
     };
   }, [hydrated, sessionRole, customerSessionId, loggedInCapsterId, operationalDayKey]);
 
-  const shopStatus = useMemo(() => getShopOperationalStatus(nowMs), [nowMs]);
-  const todayStr = shopStatus.todayStr;
-  const operationalDayKey = shopStatus.operationalDayKey;
 
   const liveClockText = useMemo(
     () => formatLiveClockBannerWib(nowMs),
