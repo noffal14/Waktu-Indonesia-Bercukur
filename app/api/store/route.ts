@@ -377,68 +377,139 @@ async function handleCapsterAction(action: StoreAction, body: any) {
   if (action === 'schedule.dayOff' || action === 'schedule.slot') {
     const capsterId = 'hasan';
     const date = requiredText(body.tanggal);
-    if (!date || date < getWibParts(Date.now()).dateStr) return fail(400, 'Tanggal yang sudah lewat tidak dapat diubah.', 'VALIDATION_ERROR');
-    const scheduleRef = db.collection('schedules').doc(capsterId + '_' + date);
-    const scheduleSnap = await scheduleRef.get();
-    const currentSchedule = scheduleSnap.data() || {
-      capsterId, tanggal: date, jamKerja: getOperationalHoursForDate(date),
-      isLibur: false, manualSlots: {},
-    };
-
-    const bookingsQuery = await db.collection('bookingPrivate')
-      .where('capsterId', '==', capsterId).where('tanggal', '==', date)
-      .where('status', 'in', ['Booked', 'In-Service']).get();
-
-    if (action === 'schedule.dayOff') {
-      const isLibur = Boolean(body.isLibur);
-      const conflicts = isLibur ? bookingsQuery.docs.map((doc) => doc.data()) : [];
-      if (conflicts.length && !body.forceCancelConflicts) return fail(409, 'Terdapat ' + conflicts.length + ' booking pelanggan aktif pada tanggal ini. Batalkan booking tersebut secara eksplisit sebelum menandai hari libur.', 'BOOKING_CONFLICT', { conflictBookings: conflicts });
-      const batch = db.batch();
-      if (conflicts.length) {
-        for (const snap of bookingsQuery.docs) {
-          const booking = snap.data();
-          batch.update(snap.ref, { status: 'Canceled', alasanBatal: 'capster_tidak_tersedia', catatanBatal: requiredText(body.alasanLibur) || 'Capster menandai libur/izin pada tanggal ini' });
-          batch.set(db.collection('bookingPublic').doc(snap.id), { status: 'Canceled' }, { merge: true });
-          for (const slot of booking.slotTercakup || [booking.jamSlot]) batch.set(db.collection('bookingSlots').doc(slotLockId(capsterId, date, slot)), { status: 'Released' }, { merge: true });
-        }
-      }
-      batch.set(scheduleRef, { ...currentSchedule, isLibur, alasanLibur: isLibur ? requiredText(body.alasanLibur) || 'Libur / Izin Capster' : null }, { merge: true });
-      await batch.commit();
-      if (conflicts.length) {
-        for (const snap of bookingsQuery.docs) {
-          const customerSnap = snap.data().customerUid
-            ? await db.collection('customers').doc(String(snap.data().customerUid)).get()
-            : null;
-          await syncBookingFinal(snap.id, snap.data(), customerSnap?.data() || snap.data(), 'Batal');
-        }
-      }
-      return Response.json({ ok: true });
+    if (!date || date < getWibParts(Date.now()).dateStr) {
+      return fail(400, 'Tanggal yang sudah lewat tidak dapat diubah.', 'VALIDATION_ERROR');
     }
 
+    const scheduleRef = db.collection('schedules').doc(capsterId + '_' + date);
+    const bookingsQuery = db.collection('bookingPrivate')
+      .where('capsterId', '==', capsterId)
+      .where('tanggal', '==', date)
+      .where('status', 'in', ['Booked', 'In-Service']);
+
+    const isDayOff = action === 'schedule.dayOff';
+    const isLibur = Boolean(body.isLibur);
     const jam = requiredText(body.jam);
     const mode = requiredText(body.mode);
-    if (!['tersedia', 'tidak_tersedia', 'terisi_manual'].includes(mode)) return fail(400, 'Status slot tidak valid.', 'VALIDATION_ERROR');
-    const conflict = bookingsQuery.docs.find((snap) => (snap.data().slotTercakup || [snap.data().jamSlot]).includes(jam));
-    if (conflict && mode !== 'tersedia' && !body.forceCancelConflict) return fail(409, 'Slot ' + jam + ' WIB sudah dibooking oleh pelanggan. Konfirmasi pembatalan booking sebelum mengubah status slot.', 'BOOKING_CONFLICT', { conflictBookings: [conflict.data()] });
-    const manualSlots = { ...(currentSchedule.manualSlots || {}) } as Record<string, any>;
-    if (mode === 'tersedia') delete manualSlots[jam];
-    else manualSlots[jam] = { tipe: mode, catatan: requiredText(body.catatan) || undefined };
-    const batch = db.batch();
-    if (conflict && body.forceCancelConflict) {
-      const booking = conflict.data();
-      batch.update(conflict.ref, { status: 'Canceled', alasanBatal: 'capster_tidak_tersedia', catatanBatal: requiredText(body.catatan) || 'Slot ditandai tidak tersedia oleh capster' });
-      batch.set(db.collection('bookingPublic').doc(conflict.id), { status: 'Canceled' }, { merge: true });
-      for (const slot of booking.slotTercakup || [booking.jamSlot]) batch.set(db.collection('bookingSlots').doc(slotLockId(capsterId, date, slot)), { status: 'Released' }, { merge: true });
+    if (!isDayOff && (!jam || !['tersedia', 'tidak_tersedia', 'terisi_manual'].includes(mode))) {
+      return fail(400, 'Status slot tidak valid.', 'VALIDATION_ERROR');
     }
-    batch.set(scheduleRef, { ...currentSchedule, manualSlots }, { merge: true });
-    await batch.commit();
-    if (conflict && body.forceCancelConflict) {
-      const canceled = conflict.data();
-      const customerSnap = canceled.customerUid
-        ? await db.collection('customers').doc(String(canceled.customerUid)).get()
+
+    const result = await db.runTransaction(async (tx) => {
+      const [scheduleSnap, bookingSnap] = await Promise.all([
+        tx.get(scheduleRef),
+        tx.get(bookingsQuery),
+      ]);
+      const currentSchedule = scheduleSnap.data() || {
+        capsterId,
+        tanggal: date,
+        jamKerja: getOperationalHoursForDate(date),
+        isLibur: false,
+        manualSlots: {},
+      };
+      const activeBookings = bookingSnap.docs;
+      const canceledDocs = isDayOff
+        ? (isLibur ? activeBookings : [])
+        : (mode !== 'tersedia'
+            ? activeBookings.filter((snap) => {
+                const booking = snap.data();
+                return (booking.slotTercakup || [booking.jamSlot]).includes(jam);
+              })
+            : []);
+
+      if (isDayOff && canceledDocs.length && !body.forceCancelConflicts) {
+        return {
+          conflictBookings: canceledDocs.map((snap) => ({ id: snap.id, ...snap.data() })),
+          canceledDocs: [],
+        };
+      }
+      if (!isDayOff && canceledDocs.length && !body.forceCancelConflict) {
+        return {
+          conflictBookings: canceledDocs.map((snap) => ({ id: snap.id, ...snap.data() })),
+          canceledDocs: [],
+        };
+      }
+
+      const lockRefMap = new Map<string, FirebaseFirestore.DocumentReference>();
+      for (const snap of canceledDocs) {
+        const booking = snap.data();
+        const slots = Array.isArray(booking.slotTercakup) ? booking.slotTercakup : [booking.jamSlot];
+        for (const slot of slots) {
+          const lockRef = db.collection('bookingSlots').doc(slotLockId(capsterId, date, String(slot)));
+          lockRefMap.set(lockRef.path, lockRef);
+        }
+      }
+      const lockRefs = Array.from(lockRefMap.values());
+      const lockSnaps = lockRefs.length ? await tx.getAll(...lockRefs) : [];
+
+      if (isDayOff) {
+        tx.set(scheduleRef, {
+          ...currentSchedule,
+          isLibur,
+          alasanLibur: isLibur ? requiredText(body.alasanLibur) || 'Libur / Izin Capster' : null,
+        }, { merge: true });
+      } else {
+        const manualSlots = { ...(currentSchedule.manualSlots || {}) } as Record<string, any>;
+        if (mode === 'tersedia') {
+          delete manualSlots[jam];
+        } else {
+          const note = requiredText(body.catatan);
+          manualSlots[jam] = note ? { tipe: mode, catatan: note } : { tipe: mode };
+        }
+        tx.set(scheduleRef, { ...currentSchedule, manualSlots }, { merge: true });
+      }
+
+      const canceledIds = new Set(canceledDocs.map((snap) => snap.id));
+      for (const snap of canceledDocs) {
+        const booking = snap.data();
+        const reason = isDayOff
+          ? requiredText(body.alasanLibur) || 'Capster menandai libur/izin pada tanggal ini'
+          : requiredText(body.catatan) || 'Slot ditandai tidak tersedia oleh capster';
+        tx.update(snap.ref, {
+          status: 'Canceled',
+          alasanBatal: 'capster_tidak_tersedia',
+          catatanBatal: reason,
+          canceledAt: Date.now(),
+          sheetSyncStatus: 'pending',
+        });
+        tx.set(db.collection('bookingPublic').doc(snap.id), {
+          status: 'Canceled',
+          canceledAt: Date.now(),
+        }, { merge: true });
+      }
+
+      lockSnaps.forEach((lockSnap) => {
+        const lock = lockSnap.data() as FirebaseFirestore.DocumentData | undefined;
+        if (lockSnap.exists && lock?.bookingId && canceledIds.has(String(lock.bookingId))) {
+          tx.set(lockSnap.ref, { status: 'Released', releasedAt: Date.now() }, { merge: true });
+        }
+      });
+
+      return {
+        conflictBookings: [],
+        canceledDocs,
+      };
+    });
+
+    if (result.conflictBookings.length) {
+      return fail(
+        409,
+        isDayOff
+          ? 'Terdapat booking pelanggan aktif pada tanggal ini. Batalkan booking tersebut secara eksplisit sebelum menandai hari libur.'
+          : 'Slot ' + jam + ' WIB sudah dibooking oleh pelanggan. Konfirmasi pembatalan booking sebelum mengubah status slot.',
+        'BOOKING_CONFLICT',
+        { conflictBookings: result.conflictBookings }
+      );
+    }
+
+    for (const snap of result.canceledDocs) {
+      const booking = snap.data();
+      const customerSnap = booking.customerUid
+        ? await db.collection('customers').doc(String(booking.customerUid)).get()
         : null;
-      await syncBookingFinal(conflict.id, canceled, customerSnap?.data() || canceled, 'Batal');
+      await syncBookingFinal(snap.id, booking, customerSnap?.data() || booking, 'Batal');
     }
+
     return Response.json({ ok: true });
   }
 
