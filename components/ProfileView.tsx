@@ -21,8 +21,8 @@ interface ProfileViewProps {
     capsterFavoritId?: string;
     currentPassword?: string;
     newPassword?: string;
-  }) => ServiceResult<{ customer: Customer }>;
-  onDeleteAccount: () => ServiceResult<unknown>;
+  }) => ServiceResult<{ customer: Customer }> | Promise<ServiceResult<{ customer: Customer }>>;
+  onDeleteAccount: () => ServiceResult<unknown> | Promise<ServiceResult<unknown>>;
 }
 
 export function ProfileView({
@@ -48,7 +48,7 @@ export function ProfileView({
 
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setFeedback(null);
 
@@ -69,7 +69,7 @@ export function ProfileView({
       }
     }
 
-    const res = onUpdateProfile({
+    const res = await onUpdateProfile({
       nama,
       email: email || undefined,
       capsterFavoritId: capsterFavoritId || undefined,
@@ -304,7 +304,10 @@ export function ProfileView({
             </span>
             <button
               type="button"
-              onClick={() => onDeleteAccount()}
+              onClick={async () => {
+                const result = await onDeleteAccount();
+                if (!result.ok) setFeedback({ type: 'error', text: result.message || 'Gagal menghapus akun.' });
+              }}
               className="min-h-[42px] px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold"
             >
               Ya, Hapus Akun Sekarang
