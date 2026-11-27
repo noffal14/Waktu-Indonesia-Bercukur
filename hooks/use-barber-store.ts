@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { firebaseAuth } from '@/lib/firebase-client';
 import {
   barberService,
@@ -132,16 +132,21 @@ export function useBarberStore() {
     if (!hydrated || sessionRole !== 'capster') return;
     let disposed = false;
     let expiring = false;
+    let interval: number | undefined;
+
+    const clearLocalSession = (message?: string) => {
+      window.sessionStorage.removeItem('wib_capster_session_id');
+      barberService.logoutCapster();
+      setLoggedInCapsterId(null);
+      setSessionRole(null);
+      if (message) setCapsterSessionMessage(message);
+    };
 
     const expireSession = async () => {
       if (disposed || expiring) return;
       expiring = true;
-      window.sessionStorage.removeItem('wib_capster_session_id');
+      clearLocalSession('Sesi berakhir karena akun masuk di perangkat lain');
       if (firebaseAuth) await signOut(firebaseAuth).catch(() => undefined);
-      barberService.logoutCapster();
-      setLoggedInCapsterId(null);
-      setSessionRole(null);
-      setCapsterSessionMessage('Sesi berakhir karena akun masuk di perangkat lain');
     };
 
     const heartbeat = async () => {
@@ -164,11 +169,30 @@ export function useBarberStore() {
       }
     };
 
-    void heartbeat();
-    const interval = window.setInterval(() => void heartbeat(), 30_000);
+    if (!firebaseAuth) {
+      void expireSession();
+      return () => { disposed = true; };
+    }
+
+    const unsubscribe = onAuthStateChanged(firebaseAuth, (user) => {
+      if (!user) {
+        if (window.sessionStorage.getItem('wib_capster_session_id')) {
+          void expireSession();
+        } else {
+          clearLocalSession();
+        }
+        return;
+      }
+      void heartbeat();
+      if (interval === undefined) {
+        interval = window.setInterval(() => void heartbeat(), 30_000);
+      }
+    });
+
     return () => {
       disposed = true;
-      window.clearInterval(interval);
+      unsubscribe();
+      if (interval !== undefined) window.clearInterval(interval);
     };
   }, [hydrated, sessionRole]);
 
