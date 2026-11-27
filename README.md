@@ -39,13 +39,14 @@ Semua penulisan transaksi memeriksa header sebelum menulis. Tab `Rekap_Harian` h
 
 ## 3. Environment dan deployment
 
-Salin `.env.example` ke `.env.local`. Jangan commit nilai rahasia. Atur seluruh environment variable pada pengaturan project Vercel. Pastikan `CRON_SECRET` adalah secret acak yang kuat. Vercel mengirimkannya sebagai header `Authorization: Bearer ...` ke endpoint cron.
+Salin `.env.example` ke `.env.local`. Jangan commit nilai rahasia. Atur seluruh environment variable pada pengaturan project Vercel. Pastikan `CRON_SECRET` adalah secret acak yang kuat. Endpoint cron menerima header `Authorization: Bearer ...`.
 
-Cron yang dikonfigurasi:
-- `/api/cron/daily-reset`: 03:00 dan 05:00 UTC untuk menutup sesi lama dan menginisialisasi sesi operasional WIB.
-- `/api/cron/booking-expiry`: setiap 5 menit untuk membatalkan booking lebih dari 15 menit terlambat.
-- `/api/cron/sheets-retry`: setiap 15 menit untuk mencoba ulang sinkronisasi spreadsheet.
+Jadwal maintenance memakai GitHub Actions agar tidak bergantung pada batas frekuensi cron Vercel Hobby. Di GitHub repository settings, tambahkan Actions secrets:
 
+- `WIB_APP_URL`: URL production Vercel, tanpa garis miring di akhir.
+- `WIB_CRON_SECRET`: nilai yang sama dengan `CRON_SECRET` pada Vercel.
+
+Workflow `.github/workflows/scheduled-maintenance.yml` aktif setelah branch ini digabung ke default branch. Jadwal UTC: daily reset pukul 03:00 dan 05:00, booking expiry setiap 5 menit, dan retry Google Sheets setiap 15 menit. Workflow juga dapat dijalankan manual melalui GitHub Actions. `vercel.json` sengaja tidak menjadwalkan cron agar deployment tetap kompatibel dengan paket Vercel Hobby.
 ## 4. Implementasi pada branch fitur
 
 - Firebase Authentication untuk pelanggan menggunakan email internal yang diturunkan dari nomor WhatsApp. UI tetap meminta nomor WhatsApp.
