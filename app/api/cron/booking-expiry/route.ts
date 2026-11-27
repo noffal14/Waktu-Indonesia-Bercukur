@@ -1,7 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { parseWibEpochMs, LATE_TOLERANCE_MINUTES } from '@/lib/barbershop-config';
-import { syncBookingExpired } from '@/lib/server/sheets-sync';
+import { bookingExpiredSheetValues } from '@/lib/server/sheets-sync';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,6 +30,9 @@ export async function GET(request: Request) {
       const current = await tx.get(item.ref);
       if (!current.exists || current.data()?.status !== 'Booked') return null;
       const currentBooking = current.data()!;
+      const sheetValues = bookingExpiredSheetValues(currentBooking);
+      const sheetJobId = `booking-${item.id}-expired`;
+      const outboxRef = db.collection('sheetSyncQueue').doc(sheetJobId);
       const slots = Array.isArray(currentBooking.slotTercakup) ? currentBooking.slotTercakup : [currentBooking.jamSlot];
       const locks = slots.map((slot: string) => db.collection('bookingSlots').doc(
         [currentBooking.capsterId, currentBooking.tanggal, slot].join('_')
@@ -48,11 +51,23 @@ export async function GET(request: Request) {
           tx.set(lock.ref, { status: 'Released', releasedAt: now }, { merge: true });
         }
       });
+      tx.set(outboxRef, {
+        id: sheetJobId,
+        operation: 'updateTransaction',
+        values: sheetValues,
+        bookingCode: String(currentBooking.kodeTiket),
+        sourcePath: 'bookingPrivate',
+        sourceId: item.id,
+        status: 'pending',
+        attempts: 0,
+        runAfter: now,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
       return currentBooking;
     });
 
     if (result) {
-      await syncBookingExpired(item.id, result);
       canceled += 1;
     }
   }
