@@ -255,7 +255,7 @@ export function useBarberStore() {
           setSessionRole('capster');
           return;
         }
-        const customerEmailMatch = user.email?.match(/^(628\d{8,12})@pelanggan\.waktu-indonesia\\.app$/);
+        const customerEmailMatch = user.email?.match(/^(628\d{8,12})@pelanggan\.waktu-indonesia\.app$/);
         if (customerEmailMatch) {
           const result = await callCustomerAuthApi<Customer>('GET');
           if (!active) return;
