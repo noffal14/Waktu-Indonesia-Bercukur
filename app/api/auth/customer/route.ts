@@ -170,7 +170,8 @@ export async function PATCH(request: Request) {
         sourcePath: 'customers', sourceId: decoded.uid,
       });
     }
-    return Response.json({ ok: true, customer: { ...updated, id: decoded.uid, passwordHash: '' } });
+    const { sheetJobId: _sheetJobId, ...publicCustomer } = updated;
+    return Response.json({ ok: true, customer: { ...publicCustomer, id: decoded.uid, passwordHash: '' } });
   } catch (error) {
     const code = error instanceof Error ? error.message : '';
     if (code === 'AUTH_REQUIRED') return Response.json({ ok: false, message: 'Silakan masuk kembali.', errorCode: 'AUTH_REQUIRED' }, { status: 401 });
