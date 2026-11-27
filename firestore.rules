@@ -61,5 +61,6 @@ service cloud.firestore {
     match /bookingSlots/{document} { allow read, write: if false; }
     match /capsterSessions/{document} { allow read, write: if false; }
     match /sheetSyncQueue/{document} { allow read, write: if false; }
+    match /sheetSyncLocks/{document} { allow read, write: if false; }
   }
 }
