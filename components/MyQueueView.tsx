@@ -52,7 +52,7 @@ interface MyQueueViewProps {
     newCapsterId: string;
     newTanggal: string;
     newJamSlot: string;
-  }) => ServiceResult<{ booking: DataBooking; state: BarberDatabaseState }> | Promise<ServiceResult<{ booking: DataBooking; state: BarberDatabaseState }>>;
+  }) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onCancelBooking: (bookingId: string) => ServiceResult<BarberDatabaseState> | Promise<ServiceResult<BarberDatabaseState>>;
   onNavigate: (view: AppView) => void;
 }
