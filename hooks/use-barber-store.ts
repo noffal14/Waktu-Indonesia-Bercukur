@@ -205,16 +205,19 @@ export function useBarberStore() {
     let active = true;
     const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
       if (!active) return;
-      setAuthReady(true);
       if (!user) {
         setCustomerSessionId(null);
         setLoggedInCapsterId(null);
         setSessionRole(null);
         barberService.logoutCapster();
         barberService.logoutCustomer();
+        setAuthReady(true);
         return;
       }
-      if (authActionInProgressRef.current) return;
+      if (authActionInProgressRef.current) {
+        setAuthReady(true);
+        return;
+      }
       try {
         const token = await user.getIdTokenResult();
         if (!active) return;
@@ -260,6 +263,8 @@ export function useBarberStore() {
         }
       } catch {
         if (active) setSyncStatus('reconnecting');
+      } finally {
+        if (active) setAuthReady(true);
       }
     });
     return () => {
