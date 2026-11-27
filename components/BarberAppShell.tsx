@@ -202,6 +202,7 @@ export function BarberAppShell() {
                       activeCustomerWalkin={store.activeCustomerWalkin}
                       activeCustomerBooking={store.activeCustomerBooking}
                       isOffline={store.isOffline}
+                      syncStatus={store.syncStatus}
                       lastSyncedFormatted={store.lastSyncedFormatted}
                       onRefresh={store.refreshFromStore}
                       onNavigate={navigateTo}
