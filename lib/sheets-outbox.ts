@@ -61,17 +61,39 @@ export async function drainSheetSyncQueue(maxItems = 50) {
   let skipped = 0;
 
   for (const item of snapshot.docs) {
+    const job = item.data();
+    const values = (job.values || {}) as SheetSyncValues;
+    const phone = job.operation === 'upsertCustomer'
+      ? String(values['Nomor WhatsApp'] || '').trim()
+      : '';
+    const customerLockRef = phone
+      ? db.collection('sheetSyncLocks').doc('customer-' + phone)
+      : null;
+
     const claimed = await db.runTransaction(async (tx) => {
       const current = await tx.get(item.ref);
       if (!current.exists) return false;
       const data = current.data()!;
       if (!['pending', 'failed'].includes(String(data.status))) return false;
       if (Number(data.runAfter || 0) > Date.now()) return false;
+
+      const customerLock = customerLockRef ? await tx.get(customerLockRef) : null;
+      const lockData = customerLock?.data();
+      const lockActive = Number(lockData?.leaseUntil || 0) > Date.now();
+      if (customerLock?.exists && lockActive && lockData?.ownerJobId !== item.id) return false;
+
       tx.update(item.ref, {
         status: 'processing',
         processingStartedAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
+      if (customerLockRef) {
+        tx.set(customerLockRef, {
+          ownerJobId: item.id,
+          leaseUntil: Date.now() + 10 * 60_000,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
       return true;
     });
 
@@ -80,8 +102,16 @@ export async function drainSheetSyncQueue(maxItems = 50) {
       continue;
     }
 
-    const job = item.data();
-    const values = (job.values || {}) as SheetSyncValues;
+    const releaseCustomerLock = async () => {
+      if (!customerLockRef) return;
+      await db.runTransaction(async (tx) => {
+        const lock = await tx.get(customerLockRef);
+        if (lock.exists && lock.data()?.ownerJobId === item.id) {
+          tx.delete(customerLockRef);
+        }
+      });
+    };
+
     try {
       if (job.operation === 'appendTransaction') {
         await appendTransactionOnce(values);
@@ -113,6 +143,7 @@ export async function drainSheetSyncQueue(maxItems = 50) {
           sheetSyncError: FieldValue.delete(),
         }, { merge: true });
       }
+      await releaseCustomerLock();
       synced += 1;
     } catch (error) {
       const attempts = Number(job.attempts || 0) + 1;
@@ -132,6 +163,7 @@ export async function drainSheetSyncQueue(maxItems = 50) {
           sheetSyncUpdatedAt: Date.now(),
         }, { merge: true });
       }
+      await releaseCustomerLock();
       failed += 1;
     }
   }
