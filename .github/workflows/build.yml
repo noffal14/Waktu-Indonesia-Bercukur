@@ -26,5 +26,7 @@ jobs:
         run: |
           npm audit --json > /tmp/npm-audit.json || true
           node -e "const a=require('/tmp/npm-audit.json'); console.log('Vulnerability totals:', JSON.stringify(a.metadata?.vulnerabilities || {})); for (const [name, item] of Object.entries(a.vulnerabilities || {})) console.log(JSON.stringify({name, severity:item.severity, range:item.range, fixAvailable:item.fixAvailable, via:item.via}));"
+      - name: Lint
+        run: npm run lint
       - name: Build Next.js
         run: npm run build
