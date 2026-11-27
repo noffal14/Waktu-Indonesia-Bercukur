@@ -5,6 +5,7 @@ import { verifyCapsterRequest, CapsterAuthError, capsterErrorResponse } from '@/
 import { getOperationalSessionKey, getOperationalHoursForDate, generateHourSlots, parseWibEpochMs, getWibParts, LATE_TOLERANCE_MINUTES, RESCHEDULE_MIN_LEAD_MINUTES } from '@/lib/barbershop-config';
 import { calculateServicesPricing, getInitialSystemPromos, isPromoActiveNow } from '@/lib/services-catalog';
 import { appendTransactionOnce, updateTransactionByCode, upsertCustomerByWhatsApp } from '@/lib/google-sheets';
+import { enqueueSheetSync } from '@/lib/sheets-outbox';
 import { getInitialCapsterProfile, normalizeWaToLocal08, normalizeWaTo628, validateInstagramHandle } from '@/lib/capster-profile';
 
 export const dynamic = 'force-dynamic';
@@ -69,6 +70,7 @@ async function syncBookingCreated(id: string, booking: any, customer: any) {
     await setSheetStatus(ref, 'synced', { sheetRowRef: result.rowNumber || null, sheetSyncError: FieldValue.delete() });
   } catch (error) {
     await setSheetStatus(ref, 'failed', { sheetSyncError: String(error).slice(0, 500), sheetSyncAttempts: FieldValue.increment(1) });
+    await enqueueSheetSync(`booking-${id}-append`, 'appendTransaction', bookingSheetValues(booking, customer, 'Booked (harga final dikonfirmasi capster)'), { sourcePath: 'bookingPrivate', sourceId: id });
   }
 }
 async function syncBookingFinal(id: string, booking: any, customer: any, status: string, finalTotal?: number) {
@@ -78,6 +80,7 @@ async function syncBookingFinal(id: string, booking: any, customer: any, status:
     await setSheetStatus(ref, 'synced', { sheetSyncError: FieldValue.delete(), sheetSyncAttempts: FieldValue.increment(1) });
   } catch (error) {
     await setSheetStatus(ref, 'failed', { sheetSyncError: String(error).slice(0, 500), sheetSyncAttempts: FieldValue.increment(1) });
+    await enqueueSheetSync(`booking-${id}-final`, 'updateTransaction', bookingSheetValues(booking, customer, status, finalTotal), { bookingCode: booking.kodeTiket, sourcePath: 'bookingPrivate', sourceId: id });
   }
 }
 async function syncCustomer(customer: any, visitCount?: number, lastVisit?: string) {
@@ -92,6 +95,14 @@ async function syncCustomer(customer: any, visitCount?: number, lastVisit?: stri
     });
   } catch (error) {
     console.error('[sheet-customer-sync]', error);
+    await enqueueSheetSync(`customer-${String(customer.nomorWhatsApp || 'unknown')}`, 'upsertCustomer', {
+      'Nama': customer.nama,
+      'Nomor WhatsApp': customer.nomorWhatsApp,
+      'Email': customer.email || '',
+      'Tanggal Daftar': new Date(customer.dibuatPada || Date.now()).toISOString(),
+      'Kunjungan Terakhir': lastVisit || '',
+      'Total Kunjungan': visitCount ?? 0,
+    });
   }
 }
 async function userContext(request: Request) {
@@ -530,6 +541,7 @@ async function handleCapsterAction(action: StoreAction, body: any) {
         await ref.set({ sheetSyncStatus: 'synced', sheetRowRef: synced.rowNumber || null, sheetSyncError: FieldValue.delete() }, { merge: true });
       } catch (error) {
         await ref.set({ sheetSyncStatus: 'failed', sheetSyncError: String(error).slice(0, 500) }, { merge: true });
+        await enqueueSheetSync(`walkin-${id}-append`, 'appendTransaction', sheetValues, { sourcePath: 'queuePrivate', sourceId: id });
       }
       if (completed.customer) {
         await syncCustomer(completed.customer, completed.visits, q.tanggal);
