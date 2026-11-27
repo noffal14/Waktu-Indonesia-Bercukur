@@ -40,7 +40,7 @@ export function CapsterDashboardShell() {
   useEffect(() => {
     if (shouldRejectToHome) {
       const timer = window.setTimeout(() => {
-        router.replace('/');
+        router.replace('/login?role=capster');
       }, 900);
       return () => window.clearTimeout(timer);
     }
